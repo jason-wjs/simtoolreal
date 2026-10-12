@@ -122,3 +122,32 @@ modes return contact points in this fixture. Their data cannot certify physical
 quality in the original GPU-pipeline policy run. `minDist` is the solver's target
 distance, not signed separation; `initialOverlap` refers to the start of a time
 step. Neither should be relabeled as Lab's signed contact separation.
+
+## Central critic checkpoint continuation
+
+New training checkpoints include the asymmetric critic's independent Adam state,
+learning rate, epoch and frame counters in `central_value_training`. Previously
+only its network parameters and running statistics were saved, so restoring a
+training checkpoint silently restarted that optimizer and its counters.
+
+Training resume now rejects legacy asymmetric checkpoints that lack this state.
+Use the existing `--checkpoint_load_mode weights` for explicit initialization
+from an old checkpoint. Evaluation/player loading remains unchanged. This cannot
+recover optimizer history absent from an author's released checkpoint.
+
+CPU regression using the original full SAPG networks and six exploration cohorts:
+
+```bash
+CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 timeout --kill-after=10s 180 \
+  .venv_isaacsim/bin/python reproduction/check_critic_resume.py \
+  --output outputs/critic-resume-check
+```
+
+The fixture uses six synthetic actors (one per cohort), no physics and no AMP.
+It performs two actual critic training epochs, saves through `A2CAgent.save`,
+restores into a freshly constructed agent and compares the next identical-batch
+update with uninterrupted training. Adam tensors, counters, losses and resulting
+model tensors must match exactly. It also verifies legacy resume rejection and
+explicit weight loading. This proves critic learner continuation in this fixture;
+actor-gradient, AMP, RNG and simulator/rollout restoration still require native
+training verification before claiming complete task resume.

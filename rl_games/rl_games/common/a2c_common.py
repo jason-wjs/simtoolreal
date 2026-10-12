@@ -685,6 +685,12 @@ class A2CBase(BaseAlgorithm):
 
         if self.has_central_value:
             state['assymetric_vf_nets'] = self.central_value_net.state_dict()
+            state['central_value_training'] = {
+                'optimizer': self.central_value_net.optimizer.state_dict(),
+                'epoch': self.central_value_net.epoch_num,
+                'frame': self.central_value_net.frame,
+                'lr': self.central_value_net.lr,
+            }
 
         # This is actually the best reward ever achieved. last_mean_rewards is perhaps not the best variable name
         # We save it to the checkpoint to prevent overriding the "best ever" checkpoint upon experiment restart
@@ -713,6 +719,11 @@ class A2CBase(BaseAlgorithm):
 
     def set_full_state_weights(self, weights, set_epoch=True):
 
+        if self.has_central_value and 'central_value_training' not in weights:
+            raise ValueError(
+                'Checkpoint lacks central critic optimizer/counters; exact learner resume is unavailable. '
+                'Use checkpoint_load_mode=weights for explicit weight initialization.'
+            )
         self.set_weights(weights)
         if set_epoch:
             self.epoch_num = weights['epoch']
@@ -720,6 +731,12 @@ class A2CBase(BaseAlgorithm):
 
         if self.has_central_value:
             self.central_value_net.load_state_dict(weights['assymetric_vf_nets'])
+            central_training = weights['central_value_training']
+            self.central_value_net.optimizer.load_state_dict(central_training['optimizer'])
+            self.central_value_net.lr = central_training['lr']
+            if set_epoch:
+                self.central_value_net.epoch_num = central_training['epoch']
+                self.central_value_net.frame = central_training['frame']
 
         self.optimizer.load_state_dict(weights['optimizer'])
         self.last_lr = weights['optimizer']['param_groups'][0]['lr']
