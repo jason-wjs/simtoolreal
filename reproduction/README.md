@@ -179,6 +179,31 @@ including direct PhysX joint/object readbacks, and compares actor/critic Adam,
 AMP, recurrent and rollout buffers. The sibling study's
 `experiments/simtoolreal/run_lab_resume_probe.py` runs two epochs followed by a
 separate process restoring and running epoch three, with a 360-second bound per
-process. It uses 96 environments, six exploration cohorts and six procedural
+process. It uses 96 environments, six exploration cohorts and twelve procedural
 assets only as a resume fixture; this is not the full training recipe or an
 H100 throughput benchmark. Detailed results and remaining gates are in the study.
+
+## Full-recipe performance probe and shared Kit extensions
+
+`reproduction/profile_lab_training.py` executes the original training CLI and
+adds synchronized epoch-boundary timings, Torch peak memory and finite-loss
+checks. It writes `epoch_profile.jsonl` under the Hydra run directory. The study
+repository's bounded profile driver selects the original Lab defaults, with only
+`max_epochs=6`. Its explicit 3,072-environment diagnostic retains six cohorts
+and the complete asset pool, reducing cohort/minibatch sizes proportionally; it
+is labeled separately from the default 24,576-environment recipe. A cooperative
+SIGUSR1 stack dump helps locate slow startup in containers that prohibit ptrace.
+Default 100 samples apply to **12 distributions** across six
+category labels, generating **1,200** URDFs; count the generated pool, not labels.
+
+The installed Isaac Lab converter requires URDF importer **2.4.31**. The bundled
+Isaac Sim extension is 2.4.30; prior native evaluations used the downloaded 2.4.31
+cache. Kit's shared-venv cache entries were symlinks into one node's `/root` and
+broke on another node. The exact working importer and its `omni.kit.pip_archive`
+dependency are now physically copied to the shared runtime directory
+`/data_team/junsong/dexhand/runtime/kit-extensions-verified-20261013/`.
+The two Kit cache links target that directory. All 198 importer and 3,201 pip
+archive files were hash-compared with their source before link replacement.
+`manifest.json` there records every file hash and source/destination path; SHA256:
+`5cc8326348628b2b21335f1118224246bf0563f119b230a15411cba2f1f1a0ff`.
+No importer binary or model conversion setting was changed.
