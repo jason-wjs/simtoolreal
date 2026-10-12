@@ -207,3 +207,22 @@ archive files were hash-compared with their source before link replacement.
 `manifest.json` there records every file hash and source/destination path; SHA256:
 `5cc8326348628b2b21335f1118224246bf0563f119b230a15411cba2f1f1a0ff`.
 No importer binary or model conversion setting was changed.
+
+## Evaluate a checkpoint trained by the Lab CLI
+
+Lab writes its resolved Hydra configuration under `run/.hydra/config.yaml`,
+with the learner under `agent`. The deployment player previously only accepted
+Gym's `train` root and failed with `KeyError: train`. `read_cfg` now resolves
+Hydra references (including the environment count) before mapping the actual
+Lab learner to the player's existing `train` interface. Existing Gym configs
+keep their original path. No network, observation, action or evaluation task
+setting is changed by this mapping.
+
+`reproduction/check_lab_player.py --config CONFIG --checkpoint CHECKPOINT
+--output RESULT.json` checks a real SAPG policy-0 checkpoint on CPU: all model
+state tensors equal the saved values; recurrent inference gives finite bounded
+29-dimensional actions from 140-dimensional observations; reset repeats the
+same four-step action sequence exactly. This passed for the epoch-6 native Lab
+checkpoint and the author's original released checkpoint. The epoch-6 policy
+also completed one original Lab DexToolBench evaluation with substep auditing.
+See the sibling study's `docs/simtoolreal-trained-checkpoint-eval.md` for evidence.

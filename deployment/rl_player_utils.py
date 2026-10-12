@@ -33,6 +33,10 @@ def read_cfg(config_path: str, device: Optional[str] = None) -> dict:
     # Need to convert back to dict
     cfg = omegaconf_to_dict(omegaconf_cfg)
 
+    # Lab Hydra saves the learner under agent; resolve env references first.
+    if "agent" in cfg:
+        cfg["train"] = cfg.pop("agent")
+
     # Modify device manually
     if device is not None:
         if (
