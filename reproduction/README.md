@@ -31,3 +31,27 @@ Pass the SDK's existing asset-root override to `dextoolbench/eval_isaacsim.py`:
 The cache script verifies the USD SHA256 and records texture hashes. It does not
 replace the ground geometry or modify the policy/task. Set `https_proxy` to the
 cluster proxy when downloading. Runtime validation is recorded in the study repo.
+
+## Native physical audit
+
+Add `--audit_physics --output_dir <run-directory>` to the original Lab evaluator.
+The opt-in environment subclass records every physics substep (including the
+initial zero-action reset tick) before automatic episode reset. It enables native
+contact reporting on the manipulated object without changing solver settings,
+geometry, policy or success calculations.
+
+Outputs: `physics_trajectory.npz` contains joint position/velocity, object and goal
+states (Isaac Lab wxyz quaternion convention), policy actions, and packed native
+contact data. `contact_offsets` maps each recorded substep to its contact rows.
+`physics_audit.json` reports signed PhysX contact separation, contact-weighted
+penetration statistics, per-body breakdown, joint-limit deviation and finiteness.
+Buffer saturation raises an error instead of silently declaring a physical pass.
+
+Coverage is object-to-robot and object-to-table. Robot self-contact, robot-table
+and ground contacts are not covered yet. A 5 mm exceedance count is a descriptive
+diagnostic, not an agreed physical acceptance threshold. No contacts is not a pass.
+
+Verified first fixture: `claw_hammer / swing_down`, original checkpoint, one
+episode: 37/37 goals and 534 policy steps both with and without recording. Audit
+recorded 1,070 substeps and 29,859 contacts, max penetration 2.95 mm, contact-weighted
+p95 0.59 mm. See the study repository for further tasks and limitations.

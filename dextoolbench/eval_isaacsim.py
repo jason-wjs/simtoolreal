@@ -62,6 +62,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         default=True,
                         help="Always use the default table URDF regardless of category.")
     parser.add_argument("--rl_device", default="cuda")
+    parser.add_argument("--audit_physics", action="store_true",
+                        help="Record native contacts and states at every physics substep; requires output_dir.")
     return parser
 
 
@@ -159,7 +161,13 @@ def main() -> None:
     term.success_steps = 1
     term.max_consecutive_successes = n_goals
 
-    env = gym.make("Isaacsimenvs-SimToolReal-Direct-v0", cfg=cfg)
+    if args.audit_physics:
+        if args.output_dir is None:
+            raise ValueError("--audit_physics requires --output_dir")
+        from isaacsimenvs.tasks.simtoolreal.utils.audit_utils import AuditedSimToolRealEnv
+        env = AuditedSimToolRealEnv(cfg)
+    else:
+        env = gym.make("Isaacsimenvs-SimToolReal-Direct-v0", cfg=cfg)
     inner = env.unwrapped
     inner._replay_target_lab_order = None
 
@@ -228,6 +236,8 @@ def main() -> None:
                 indent=4,
             )
         print(f"[eval] wrote {output_dir / 'eval.json'}")
+        if args.audit_physics:
+            inner.write_audit(output_dir)
 
     import os
     import sys
