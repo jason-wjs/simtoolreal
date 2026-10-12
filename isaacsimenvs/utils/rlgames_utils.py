@@ -294,9 +294,24 @@ def register_rlgames_env(
         wrapper_cls = _DAggerRlGamesVecEnvWrapper
 
     wrapped = wrapper_cls(env, rl_device, clip_obs, clip_actions)
+    # The native adapter inherits no-op environment checkpoint methods. Only
+    # the original SimToolReal teacher has the task-state implementation below.
+    from isaacsimenvs.tasks.simtoolreal.simtoolreal_env import SimToolRealEnv
+    gpu_env_cls = RlGamesGpuEnv
+    if type(env.unwrapped) is SimToolRealEnv:
+        from isaacsimenvs.tasks.simtoolreal.utils import checkpoint_utils
+
+        class SimToolRealGpuEnv(RlGamesGpuEnv):
+            def get_env_state(self):
+                return checkpoint_utils.get_env_state(self.env.env.unwrapped)
+
+            def set_env_state(self, state):
+                checkpoint_utils.set_env_state(self.env.env.unwrapped, state)
+
+        gpu_env_cls = SimToolRealGpuEnv
     vecenv.register(
         "IsaacRlgWrapper",
-        lambda config_name, num_actors, **kw: RlGamesGpuEnv(config_name, num_actors, **kw),
+        lambda config_name, num_actors, **kw: gpu_env_cls(config_name, num_actors, **kw),
     )
     env_configurations.register(
         name,

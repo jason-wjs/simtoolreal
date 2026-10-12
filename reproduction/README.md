@@ -151,3 +151,34 @@ model tensors must match exactly. It also verifies legacy resume rejection and
 explicit weight loading. This proves critic learner continuation in this fixture;
 actor-gradient, AMP, RNG and simulator/rollout restoration still require native
 training verification before claiming complete task resume.
+
+## Native SimToolReal teacher task continuation
+
+The original Isaac Lab RL-Games adapter inherited empty environment state
+methods: it restored old policy observations/LSTM buffers into a newly created
+physical scene. This fork connects the original `SimToolRealEnv` teacher to a
+specific state serializer. Other existing task classes keep their adapters.
+
+The task checkpoint contains scene poses/velocities, joint targets, reward and
+termination trackers, action/observation/object delay queues, curriculum counters,
+random wrench buffers, friction materials, and Python/NumPy/Torch CPU/CUDA RNG
+states. Restore checks joint ordering and per-environment object assignment and
+scales, uses the existing `scene.reset_to`, then restores the actual drive targets
+(which differ from measured joint positions) and wrench/material state. No
+physics integration is performed during restoration. Missing task state is an
+error for resume; old weights can still initialize a fresh run explicitly.
+
+This implementation targets the original single-GPU teacher recipe. Camera
+student and fixed-trajectory ablation buffers are not implemented and those
+configurations fail explicitly when saving task state. Internal PhysX contact
+and solver caches are not serialized; identical future physics is not promised.
+
+`reproduction/check_lab_resume.py` runs the original training CLI with read-only
+checkpoint and first-rollout probes. It records saved/restored native states,
+including direct PhysX joint/object readbacks, and compares actor/critic Adam,
+AMP, recurrent and rollout buffers. The sibling study's
+`experiments/simtoolreal/run_lab_resume_probe.py` runs two epochs followed by a
+separate process restoring and running epoch three, with a 360-second bound per
+process. It uses 96 environments, six exploration cohorts and six procedural
+assets only as a resume fixture; this is not the full training recipe or an
+H100 throughput benchmark. Detailed results and remaining gates are in the study.
