@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run from the repository root; uv must be on PATH.
 set -euo pipefail
+mkdir -p outputs
 uv venv --python 3.11.15 .venv_isaacsim
 uv pip install --python .venv_isaacsim/bin/python \
   'torch==2.7.0' 'numpy==1.26.0' 'isaaclab[isaacsim]==2.3.2.post1' \
