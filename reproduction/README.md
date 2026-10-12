@@ -79,3 +79,46 @@ Study `experiments/simtoolreal/compare_native_state.py` compares these snapshots
 The study also preserves explicit diagnostic patches for startup ticks, reset
 height and legacy friction. Those patches are separate from the author's default
 evaluator behavior and are not silently enabled by the audit flag.
+
+## Preview 4 aggregate memory repair
+
+The installed Preview 4 GPU library clears `(n+31)//8` bytes in an aggregate
+bitmap allocated with `4*((n+31)//32)` bytes. Native asset inventory finds a
+mismatch for 9 of the 12 original tools. A four-actor short-screwdriver fixture
+with capacity 41 reproduces a one-byte overrun in both `createAggregate` and
+`gpuDmaDataUp`. Reserving capacity 65 removes these specific Valgrind errors.
+Other Python/CUDA Valgrind messages remain; this is a targeted regression.
+
+The Gym task now rounds reserved shape capacity upward to 1 modulo 32. Actor and
+shape counts, collision masks and solver settings remain the same. This repairs
+the demonstrated allocation defect; it does not establish the cause of policy
+outcome variability. SDK binary SHA256 and full evidence live in the study repo.
+
+With the Gym environment exports from [gym-runtime.md](gym-runtime.md):
+
+```bash
+CUDA_VISIBLE_DEVICES=0 .venv-gym/bin/python reproduction/check_native_aggregate.py \
+  --output outputs/aggregate-inventory.json
+CUDA_VISIBLE_DEVICES=0 .venv-gym/bin/python reproduction/check_native_aggregate.py \
+  --fixture short_screwdriver --round-capacity --output outputs/aggregate-fixed.json
+```
+
+For a memory regression, run the latter under Valgrind both with and without
+`--round-capacity` and inspect allocation-related invalid-write stacks. A normal
+exit code alone is insufficient: both original and repaired fixtures exit 0.
+The fixture uses the four original assets but is an allocation test, not a full
+policy scene or physical-quality certification.
+
+## Gym contact API capability
+
+`reproduction/check_gym_contacts.py --mode MODE --output PATH` runs a 30-step
+contacting-box positive control and an airborne negative control. Modes are
+`gpu`, `cpu_pipeline_gpu_physx` and `cpu`. Execute with `.venv-gym/bin/python`
+and the runtime exports above on an idle GPU.
+
+GPU pipeline explicitly rejects `get_env_rigid_contacts` after stepping and
+returns empty arrays despite nonzero tensor contact force. Both CPU-pipeline
+modes return contact points in this fixture. Their data cannot certify physical
+quality in the original GPU-pipeline policy run. `minDist` is the solver's target
+distance, not signed separation; `initialOverlap` refers to the start of a time
+step. Neither should be relabeled as Lab's signed contact separation.

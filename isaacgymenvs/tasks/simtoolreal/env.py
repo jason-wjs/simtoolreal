@@ -1922,6 +1922,13 @@ class SimToolReal(VecTask):
         max_agg_bodies += additional_rb
         max_agg_shapes += additional_shapes
 
+        # Preview 4's GPU aggregate bitmap clears (n+31)//8 bytes but allocates
+        # only 4*((n+31)//32). Capacity 1 mod 32 makes the lengths agree.
+        # Reserve spare slots only: keep every actor, shape and collision mask.
+        original_max_agg_shapes = max_agg_shapes
+        max_agg_shapes = ((max_agg_shapes + 30) // 32) * 32 + 1
+        print(f"Aggregate shape capacity: {original_max_agg_shapes} -> {max_agg_shapes}")
+
         # set up object and goal positions
         self.object_start_pose = self._object_start_pose(
             robot_pose, table_pose_dy, table_pose_dz
