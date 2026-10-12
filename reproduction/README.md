@@ -226,3 +226,17 @@ same four-step action sequence exactly. This passed for the epoch-6 native Lab
 checkpoint and the author's original released checkpoint. The epoch-6 policy
 also completed one original Lab DexToolBench evaluation with substep auditing.
 See the sibling study's `docs/simtoolreal-trained-checkpoint-eval.md` for evidence.
+
+### Resume diagnostics for production checkpoints
+
+The full-scale profile checkpoint includes saved task state but no diagnostic
+`reproduction_native_state` field. The resume probe now reports that field's
+presence explicitly and always compares restored scene joint/object state
+against direct PhysX reads (including wxyz-to-xyzw conversion). Exact task-tree
+and learner-tree comparisons remain required; absence of a diagnostic snapshot
+is not treated as a missing production task state. Prior diagnostic checkpoints
+retain the additional original saved-native comparison. First-rollout state is
+still compared before any physics step. The new scene/readback comparison gives
+zero differences on the earlier real restore recording and detects an injected
+0.1-rad joint mismatch. Original-scale process continuation is a separate run,
+not established by that CPU check.

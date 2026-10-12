@@ -33,6 +33,17 @@ def differences(expected, actual):
             for k, v in expected.items()}
 
 
+def physics_readback_differences(state):
+    root = state['object_root']
+    expected = {'joint_pos': state['joint_pos'], 'joint_vel': state['joint_vel'],
+                'object_pose': torch.cat((root[:, :3], root[:, 4:7], root[:, 3:4]), dim=1),
+                'object_velocity': root[:, 7:13]}
+    actual = {'joint_pos': state['physx_joint_pos'], 'joint_vel': state['physx_joint_vel'],
+              'object_pose': state['physx_object_pose_xyzw'],
+              'object_velocity': state['physx_object_velocity']}
+    return differences(expected, actual)
+
+
 def equal_tree(a, b):
     if isinstance(a, torch.Tensor):
         return torch.equal(a.cpu(), b.cpu())
@@ -60,8 +71,12 @@ def set_state(self, weights, set_epoch=True):
     before = snapshot(self)
     original_set(self, weights, set_epoch=set_epoch)
     after = snapshot(self)
+    # Production checkpoints have task state, but no diagnostic-only snapshot.
+    saved_native = weights.get('reproduction_native_state')
     report = {'saved_env_state_is_none': weights['env_state'] is None,
-              'saved_vs_restored_native': differences(weights['reproduction_native_state'], after),
+              'saved_native_probe_present': saved_native is not None,
+              'saved_vs_restored_native': differences(saved_native, after) if saved_native is not None else None,
+              'restored_scene_vs_physx': physics_readback_differences(after),
               'before_vs_after_restore_native': differences(before, after),
               'saved_observation_restored_exactly': all(torch.equal(v, self.obs[k]) for k, v in weights['obs'].items()),
               'epoch': self.epoch_num, 'frame': self.frame,
@@ -75,7 +90,7 @@ def set_state(self, weights, set_epoch=True):
             'current_lengths', 'epoch', 'frame']
     report['learner_state_exact'] = {k: equal_tree(weights[k], actual_learner[k]) for k in keys}
     path = Path(self.config['train_dir'])
-    torch.save({'saved': weights['reproduction_native_state'], 'before': before, 'after': after}, path / 'resume_native_states.pt')
+    torch.save({'saved': saved_native, 'before': before, 'after': after}, path / 'resume_native_states.pt')
     (path / 'resume_probe.json').write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
     self._reproduction_restored_state = after
 
@@ -94,5 +109,8 @@ A2CAgent.set_full_state_weights = set_state
 A2CAgent.play_steps = play_steps
 
 if __name__ == '__main__':
+    import faulthandler
+    import signal
     import runpy
+    faulthandler.register(signal.SIGUSR1, all_threads=False)
     runpy.run_path(str(Path(__file__).resolve().parents[1] / 'isaacsimenvs/train.py'), run_name='__main__')
