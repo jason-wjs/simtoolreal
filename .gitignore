@@ -138,6 +138,8 @@ celerybeat.pid
 .env
 .envrc
 .venv
+.venv_isaacsim/
+.python/
 env/
 venv/
 ENV/
