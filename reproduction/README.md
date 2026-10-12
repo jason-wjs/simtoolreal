@@ -56,3 +56,26 @@ Verified first fixture: `claw_hammer / swing_down`, original checkpoint, one
 episode: 37/37 goals and 534 policy steps both with and without recording. Audit
 recorded 1,070 substeps and 29,859 contacts, max penetration 2.95 mm, contact-weighted
 p95 0.59 mm. See the study repository for further tasks and limitations.
+
+## Read-only native parameter snapshots
+
+Both original evaluators now accept `--audit_state` (Gym also accepts the hyphen
+spelling `--audit-state`) with an output directory. At the first policy action
+of the first episode, `native_state.json` records native joint gains, limits,
+armature/friction, body masses/COM/inertia, shape counts, joint states/targets,
+object/goal states, the actual policy observation and action. Joint arrays carry
+names so Gym/Lab ordering can be aligned. Object/goal state quaternions are xyzw;
+raw inertia is retained without claiming matching reference frames.
+
+The Lab snapshot reads both deprecated friction coefficients and the current
+static/dynamic/viscous friction properties. Equal numeric coefficients across
+PhysX versions do not by themselves establish equal friction models. Recording
+is opt-in and does not change resets, actions, rewards or simulator settings.
+The full original Lab short-screwdriver outcome is unchanged with recording
+(25/38 goals, 1,386 steps); Gym shows rollout variation even without recording,
+so bitwise trajectory invariance is not claimed.
+
+Study `experiments/simtoolreal/compare_native_state.py` compares these snapshots.
+The study also preserves explicit diagnostic patches for startup ticks, reset
+height and legacy friction. Those patches are separate from the author's default
+evaluator behavior and are not silently enabled by the audit flag.

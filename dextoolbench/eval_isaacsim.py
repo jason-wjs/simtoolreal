@@ -64,6 +64,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rl_device", default="cuda")
     parser.add_argument("--audit_physics", action="store_true",
                         help="Record native contacts and states at every physics substep; requires output_dir.")
+    parser.add_argument("--audit_state", action="store_true",
+                        help="Save native parameters and first policy input/action; requires output_dir.")
     return parser
 
 
@@ -92,6 +94,8 @@ def _write_isaac_trajectory(goals_xyzw: list[list[float]], out_dir: Path) -> str
 
 def main() -> None:
     args = _args
+    if args.audit_state and args.output_dir is None:
+        raise ValueError("audit_state requires output_dir")
 
     import gymnasium as gym
     import numpy as np
@@ -200,6 +204,9 @@ def main() -> None:
         while not done:
             policy_obs = obs["policy"].to(args.rl_device)
             action = player.get_normalized_action(policy_obs, deterministic_actions=True)
+            if args.audit_state and ep == 0 and step == 0:
+                from simtoolreal_shared.native_state_audit import lab_snapshot, write_snapshot
+                write_snapshot(args.output_dir, lab_snapshot(inner, policy_obs, action))
             obs, _, terminated, truncated, _ = env.step(action.to(inner.device))
             done = bool(terminated[0].item() or truncated[0].item())
             if done:

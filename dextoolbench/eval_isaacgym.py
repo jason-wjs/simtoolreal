@@ -273,6 +273,7 @@ class EvalRunner:
         output_dir: Optional[Path] = None,
         record_video: bool = False,
         policy_name: str = None,
+        audit_state: bool = False,
     ):
         self.env = env
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -292,6 +293,9 @@ class EvalRunner:
             140, self.n_act, config_path, checkpoint_path, self.device, env.num_envs
         )
 
+        self.audit_state = audit_state
+        if audit_state and output_dir is None:
+            raise ValueError("audit_state requires output_dir")
         self.output_dir = output_dir
 
         # Recording setup
@@ -357,9 +361,11 @@ class EvalRunner:
         """Execute one simulation step with timing control."""
         t0 = time.time()
         self.viser.update(*self._get_state())
-        self.obs, done = self._step(
-            self.policy.get_normalized_action(self.obs, deterministic_actions=True)
-        )
+        action = self.policy.get_normalized_action(self.obs, deterministic_actions=True)
+        if self.audit_state and self.episode_count == 0 and timestep == 0:
+            from simtoolreal_shared.native_state_audit import gym_snapshot, write_snapshot
+            write_snapshot(self.output_dir, gym_snapshot(self.env, self.obs, action))
+        self.obs, done = self._step(action)
         self.viser.update_progress(
             int(self.env.successes[0].item()),
             self.env.max_consecutive_successes,
@@ -495,6 +501,9 @@ class EvalArgs:
     output_dir: Optional[Path] = None
     """Directory to save evaluation results."""
 
+    audit_state: bool = False
+    """Save actual native parameters and the first policy input/action."""
+
     num_episodes: int = 1
     """Number of evaluation episodes to run."""
 
@@ -624,6 +633,7 @@ def main():
         table_urdf=selected_table_urdf,
         output_dir=args.output_dir,
         policy_name=args.policy_name,
+        audit_state=args.audit_state,
     )
 
     if args.interactive:
