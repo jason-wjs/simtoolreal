@@ -25,7 +25,7 @@ bash reproduction/cache_ground.sh
 Pass the SDK's existing asset-root override to `dextoolbench/eval_isaacsim.py`:
 
 ```bash
---kit_args "--/persistent/isaac/asset_root/cloud=$(pwd)/outputs/nvidia-assets"
+--kit_args="--/persistent/isaac/asset_root/cloud=$(pwd)/outputs/nvidia-assets"
 ```
 
 The cache script verifies the USD SHA256 and records texture hashes. It does not
