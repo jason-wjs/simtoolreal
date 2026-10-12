@@ -139,6 +139,7 @@ celerybeat.pid
 .envrc
 .venv
 .venv_isaacsim/
+.venv-gym/
 .python/
 env/
 venv/
