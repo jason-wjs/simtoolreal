@@ -11,6 +11,7 @@ native baseline evaluation, not merely successful imports.
 
 Use the upstream installation guide and separate Python 3.8 Gym / Python 3.11 Lab
 environments. Local environments, downloaded weights and outputs stay untracked.
+The tested independent Gym recipe and CPU checks are in [gym-runtime.md](gym-runtime.md).
 Keep patches needed for bounded reproducible execution here; do not fold the
 previous custom grasp task into this codebase.
 # Native Lab on a cluster without direct S3 access

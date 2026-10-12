@@ -56,3 +56,38 @@ The CLI import and checkpoint loading passed. The second check records a finite
 functions. These setup checks do not establish native simulator behavior.
 Root metadata also lists asset-generation and other tools that are not needed by
 this evaluation path; they are not installed by this minimal runtime recipe.
+
+## Native pretrained playback
+
+On an idle H100 (Tele `tele_dev_4gpu`, physical GPU 1), the unchanged original
+Gym evaluator completed `claw_hammer/swing_down`: 100% of 37 waypoints,
+570 policy steps / 9.50 s; and `flat_spatula/flip_over`: 100% of 45 waypoints,
+924 steps / 15.40 s. Both exited 0. These are two reference fixtures, not a
+complete benchmark or native contact-depth audit. The corresponding Lab fixtures
+took 534 and 830 steps; completion alone does not establish trajectory parity.
+
+After the exports above and checking the selected GPU is idle:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 OMP_NUM_THREADS=4 timeout --kill-after=15s 180 \
+  .venv-gym/bin/python dextoolbench/eval_isaacgym.py \
+  --object-category hammer --object-name claw_hammer --task-name swing_down \
+  --config-path pretrained_policy/config.yaml --checkpoint-path pretrained_policy/model.pth \
+  --num-episodes 1 --output-dir outputs/native-gym-hammer
+```
+
+The original evaluator creates its Viser scene even for noninteractive playback;
+no renderer/task/solver patch was needed for these runs. First use on a node
+compiles `gymtorch` and should not be timed as steady-state policy throughput.
+Evidence: `outputs/native-gym-hammer-20261012/` and
+`outputs/native-gym-spatula-20261013/`, source task/evaluator at `a8c7176`.
+The setup-only changes at `e0caf34` do not change task or evaluator behavior.
+
+Two additional Gym diagnostics selected after the Lab failures also exited 0:
+`short_screwdriver/spin_horizontal` reached 100% in 1,266 steps / 21.10 s,
+and `blue_brush/sweep_right` reached 100% in 825 steps / 13.75 s. Their Lab
+counterparts reached 65.79% and 61.90%. Evidence directories are
+`outputs/native-gym-short-screwdriver-20261013/` and
+`outputs/native-gym-blue-brush-20261013/`. This targeted selection is not a
+representative four-task estimate of engine performance. Asset conversion,
+control/reset details and native contact behavior still need matched checks.
