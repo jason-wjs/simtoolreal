@@ -97,6 +97,12 @@ def main():
     assert env.gym.set_dof_state_tensor(env.sim, gymtorch.unwrap_tensor(dof))
     env.gym.refresh_actor_root_state_tensor(env.sim); env.gym.refresh_dof_state_tensor(env.sim)
     initial_actual = dict(root=env.root_state_tensor.cpu().tolist(), dof=env.dof_state.cpu().tolist())
+    if initial_actual != initial:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        mismatch = dict(mode=args.mode, expected=initial, actual=initial_actual,
+                       source_sha256=hashlib.sha256(args.source.read_bytes()).hexdigest() if args.source else None,
+                       script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
+        args.output.with_suffix('.initial-mismatch.json').write_text(json.dumps(mismatch) + '\n')
     assert initial_actual == initial, 'Initial native readback mismatch'
     rows = []
     for step, value in enumerate(targets):
