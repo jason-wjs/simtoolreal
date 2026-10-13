@@ -14,6 +14,8 @@ def main():
     parser.add_argument('--robot-assets', type=Path, required=True)
     parser.add_argument('--initial', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--worlds', type=int, nargs='+', default=[1139,42,226])
+    parser.add_argument('--snapshot-only', action='store_true')
     args = parser.parse_args()
     import mujoco
     import numpy as np
@@ -29,7 +31,7 @@ def main():
     initial = torch.load(args.initial, map_location='cpu', weights_only=False)
     records = json.loads((args.tools/'manifest.json').read_text())['tools']
     rows = []
-    for env_id in [1139, 42, 226]:
+    for env_id in args.worlds:
         scene = Scene(SceneCfg(num_envs=1, env_spacing=0, entities={
             'robot': robot_entity(args.robot_assets),
             'object': EntityCfg(spec_fn=partial(object_spec,args.tools/records[env_id]['path'])),
@@ -54,9 +56,11 @@ def main():
         tips = np.array([data.xpos[model.body('robot/'+name).id] for name in FINGERTIP_LINK_NAMES])
         np.testing.assert_allclose(palm,initial['palm_pose'][env_id,:3],atol=1e-6,rtol=0)
         np.testing.assert_allclose(tips,initial['fingertip_pose'][env_id,:,:3],atol=1e-6,rtol=0)
+        initial_contacts = [{'geoms':[model.geom(int(g)).name or model.body(int(model.geom_bodyid[g])).name for g in c.geom],
+                             'depth_m':max(0.,-float(c.dist))} for c in data.contact]
         pairs, tail_depth, joint_violation = {}, 0., 0.
         q_trace, v_trace, depth_trace = [], [], []
-        for step in range(480):
+        for step in range(0 if args.snapshot_only else 480):
             mujoco.mj_step(model,data)
             assert np.isfinite(data.qpos).all() and np.isfinite(data.qvel).all()
             joint_violation = max(joint_violation,float(np.maximum(
@@ -81,6 +85,7 @@ def main():
         np.savez(args.output.with_name(args.output.stem+f'-world{env_id}.npz'),
                  qpos=np.asarray(q_trace),qvel=np.asarray(v_trace),depth=np.asarray(depth_trace))
         rows.append({'global_env':env_id,'tool':records[env_id]['path'],
+                     'initial_contacts':initial_contacts,'snapshot_only':args.snapshot_only,
                      'initial_fk_matches_gpu':True,'deep_pairs':pairs,
                      'last_half_second_max_depth_m':tail_depth,
                      'max_joint_limit_violation_rad':joint_violation,
