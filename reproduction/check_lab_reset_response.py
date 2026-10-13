@@ -84,7 +84,7 @@ for substep in [1, 2]:
     env._capture_audit_substep()
 env.write_audit(args.output)
 actual = env.robot.data.joint_pos[0, env._perm_lab_to_canon].cpu()
-limits = env.robot.root_physx_view.get_dof_limits()[0, env._perm_lab_to_canon].cpu()
+limits = env.robot.root_physx_view.get_dof_limits()[0, env._perm_lab_to_canon.cpu()].cpu()
 violation = torch.maximum(limits[:, 0] - actual, actual - limits[:, 1]).clamp_min(0)
 gpu = final['joint_pos'][world]
 gpu_violation = torch.maximum(limits[:, 0] - gpu, gpu - limits[:, 1]).clamp_min(0)
