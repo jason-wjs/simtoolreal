@@ -121,7 +121,19 @@ returns empty arrays despite nonzero tensor contact force. Both CPU-pipeline
 modes return contact points in this fixture. Their data cannot certify physical
 quality in the original GPU-pipeline policy run. `minDist` is the solver's target
 distance, not signed separation; `initialOverlap` refers to the start of a time
-step. Neither should be relabeled as Lab's signed contact separation.
+step. Neither should be relabeled as Lab's post-step geometry or as an available
+GPU-pipeline measurement.
+
+`reproduction/check_gym_contact_separation.py --output PATH` calibrates10 known
+CPU PhysX box/plane and box/box scenes (overlap, small gap, rotation and separated
+controls). Run with `CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 timeout 90
+.venv-gym/bin/python` and the runtime library export. It explicitly reinstalls
+and verifies test poses after scene initialization. In the eight contacting
+fixtures, minimum `initialOverlap` matches the **pre-step signed geometric gap**
+within0.461micrometers; negative means overlap. The two far-separated controls
+have no rows. This does not validate arbitrary mesh contacts, GPU PhysX or the
+original GPU tensor pipeline. Raw field values and pre/post geometric gaps are
+retained; initialization trials must not substitute nominal poses for readback.
 
 ## Central critic checkpoint continuation
 
