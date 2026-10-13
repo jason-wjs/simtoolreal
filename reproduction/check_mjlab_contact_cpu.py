@@ -1,6 +1,5 @@
 """CPU isolation of tool/table impact; no robot, training or CUDA context."""
 import argparse
-from functools import partial
 import json
 from pathlib import Path
 import sys
