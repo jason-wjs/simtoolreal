@@ -87,6 +87,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--config-path', type=Path, default=Path('pretrained_policy/config.yaml'))
     parser.add_argument('--checkpoint-path', type=Path, default=Path('pretrained_policy/model.pth'))
+    parser.add_argument('--match-released-velocity-noise', action='store_true',
+                        help='Diagnostic: set task joint-velocity observation noise to released value0.01')
     args = parser.parse_args()
     assert (args.source is None) == (args.mode == 'capture')
     random.seed(42); np.random.seed(42); torch.manual_seed(42); torch.cuda.manual_seed_all(42)
@@ -96,6 +98,8 @@ def main():
         cfg = merge_cfg_with_default_config(read_cfg_omegaconf(config_path, device))
         cfg.task.sim.physx.use_gpu = True
         overrides = dict(overrides)
+        if args.match_released_velocity_noise:
+            overrides['task.env.jointVelocityObsNoiseStd'] = 0.01
         overrides.update({'pipeline': 'cpu' if args.mode == 'cpu_replay' else 'gpu',
                           'task.sim.physx.contact_collection': 0 if args.mode == 'capture' else 1})
         return create_env_from_cfg(cfg, headless=headless, overrides=overrides)
@@ -183,12 +187,13 @@ def main():
                 env.step(zero)  # EvalRunner.__init__ performs this first warmup.
                 player.reset()
                 obs, _, _, _ = env.step(zero)  # _run_episode then performs the second.
-                actions = []
+                actions, observations = [], []
                 done = False
                 for _ in range(600):
                     if any(joint_excess(row, env) > .05 for row in recorder.rows[-2:]):
                         metadata['physical_review_required'] = 'Joint excess>0.05rad'
                         break
+                    observations.append(array(obs['obs']))
                     action = player.get_normalized_action(obs['obs'], deterministic_actions=True)
                     assert torch.isfinite(action).all()
                     actions.append(array(action))
@@ -197,7 +202,7 @@ def main():
                     if done:
                         break
                 assert not recorder.pending
-                metadata.update(trace=recorder.rows, steps=len(recorder.rows), actions=actions,
+                metadata.update(trace=recorder.rows, steps=len(recorder.rows), actions=actions, observations=observations,
                     policy_steps=len(actions), episode_done=done,
                     goal_pct=100 * int(env.successes[0].item()) / env.max_consecutive_successes)
             args.output.parent.mkdir(parents=True, exist_ok=True)
