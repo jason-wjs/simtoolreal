@@ -55,6 +55,7 @@ def main():
         np.testing.assert_allclose(palm,initial['palm_pose'][env_id,:3],atol=1e-6,rtol=0)
         np.testing.assert_allclose(tips,initial['fingertip_pose'][env_id,:,:3],atol=1e-6,rtol=0)
         pairs, tail_depth, joint_violation = {}, 0., 0.
+        q_trace, v_trace, depth_trace = [], [], []
         for step in range(480):
             mujoco.mj_step(model,data)
             assert np.isfinite(data.qpos).all() and np.isfinite(data.qvel).all()
@@ -72,12 +73,19 @@ def main():
                 row['samples']+=1
                 if depth>row['max_depth_m']:
                     row.update(max_depth_m=depth,physics_step=step+1)
+            q_trace.append(data.qpos.copy())
+            v_trace.append(data.qvel.copy())
+            depth_trace.append(max([0.] + [-float(c.dist) for c in data.contact]))
+            if (step+1) % 2 == 0:
+                mujoco.mj_forward(model,data)
+        np.savez(args.output.with_name(args.output.stem+f'-world{env_id}.npz'),
+                 qpos=np.asarray(q_trace),qvel=np.asarray(v_trace),depth=np.asarray(depth_trace))
         rows.append({'global_env':env_id,'tool':records[env_id]['path'],
                      'initial_fk_matches_gpu':True,'deep_pairs':pairs,
                      'last_half_second_max_depth_m':tail_depth,
                      'max_joint_limit_violation_rad':joint_violation,
                      'final_object_pose':data.qpos[obj:obj+7].tolist()})
-    report={'scope':'CPU MuJoCo selected complete robot/tool/table worlds. Same native mjlab entity builders,PD controls,solver settings and saved initial states. Initial palm/fingertip FK checked against GPU. Independent trajectories, not bitwise replay.', 'cases':rows}
+    report={'scope':'CPU MuJoCo selected complete robot/tool/table worlds. Same native mjlab entity builders,PD controls,solver settings and saved initial states; forward repeated after every two physics steps like the GPU scene. Initial palm/fingertip FK checked against GPU. Independent trajectories, not bitwise replay.', 'cases':rows}
     with args.output.open('x') as stream:
         stream.write(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report))
