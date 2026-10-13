@@ -29,6 +29,43 @@ def equal_tree(a, b):
 
 original_epoch = A2CAgent.train_epoch
 original_restore = A2CAgent.set_full_state_weights
+original_action = A2CAgent.get_action_values
+original_step = A2CAgent.env_step
+
+
+def record_nonfinite(self, stage):
+    env = self.vec_env.env
+    bad = {}
+    for name, value in vars(env).items():
+        if isinstance(value, torch.Tensor) and value.is_floating_point():
+            mask = ~torch.isfinite(value)
+            if mask.any():
+                bad[name] = {'shape': list(value.shape), 'count': int(mask.sum()),
+                             'first_indices': mask.nonzero()[:10].cpu().tolist()}
+    report = {'stage': stage, 'steps_after_restore': self._restore_probe_steps,
+              'bad_task_tensors': bad,
+              'observation_finite': {k: bool(torch.isfinite(v).all()) for k, v in self.obs.items()}}
+    (Path(self.config['train_dir']) / 'first_nonfinite.json').write_text(json.dumps(report, indent=2) + '\n')
+
+
+def action(self, *args, **kwargs):
+    try:
+        return original_action(self, *args, **kwargs)
+    except RuntimeError:
+        if hasattr(self, '_restore_probe_steps'):
+            record_nonfinite(self, 'policy_action')
+        raise
+
+
+def step(self, *args, **kwargs):
+    result = original_step(self, *args, **kwargs)
+    if hasattr(self, '_restore_probe_steps'):
+        self._restore_probe_steps += 1
+        if not all(bool(torch.isfinite(v).all()) for v in result[0].values()):
+            self.obs = result[0]
+            record_nonfinite(self, 'environment_step')
+            raise RuntimeError('Nonfinite observation immediately after native environment step')
+    return result
 
 
 def train_epoch(self):
@@ -68,10 +105,13 @@ def restore(self, weights, set_epoch=True):
                                          for k, v in expected['env_state'].items()},
               'scope': 'Stored-field restore audit only. Does not establish completeness of task/DR/RNG serialization or hidden physics cache continuity.'}
     (Path(self.config['train_dir']) / 'resume_probe.json').write_text(json.dumps(report, indent=2) + '\n')
+    self._restore_probe_steps = 0
 
 
 A2CAgent.train_epoch = train_epoch
 A2CAgent.set_full_state_weights = restore
+A2CAgent.get_action_values = action
+A2CAgent.env_step = step
 
 if __name__ == '__main__':
     runpy.run_module('isaacgymenvs.train', run_name='__main__')
