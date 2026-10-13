@@ -18,7 +18,11 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--fixed-reset-fixture', type=Path,
                         help='Diagnostic only: reuse vetted per-world reset states on every episode.')
+    parser.add_argument('--trace-world52', action='store_true',
+                        help='Persist native pre/post-step states, forces and contacts for the diagnosed arm/table case.')
     args = parser.parse_args()
+    if args.trace_world52 and args.fixed_reset_fixture is None:
+        parser.error('World52 divergence trace requires the saved clear-reset fixture')
     args.output.mkdir(parents=True, exist_ok=False)
     import torch
     import warp as wp
@@ -58,9 +62,15 @@ def main():
         report['fixed_reset_fixture'] = dict(path=str(args.fixed_reset_fixture),
             sha256=hashlib.sha256(args.fixed_reset_fixture.read_bytes()).hexdigest(), metadata=metadata,
             scope='Fixed vetted reset per world on every episode. Conditional reset variant, no learner.')
+    world52_trace = []
     for ids,group in task.scene.groups:
         group.deep_streak = torch.zeros(len(ids),dtype=torch.long,device=task.device)
-        def audit(original=group.sim.step,group=group):
+        trace_local = int((ids == 52).nonzero()[0, 0]) if args.trace_world52 and bool((ids == 52).any()) else None
+        def audit(original=group.sim.step,group=group,trace_local=trace_local):
+            before = None
+            if trace_local is not None:
+                before = {name: wp.to_torch(getattr(group.sim.wp_data, name))[trace_local].cpu().clone()
+                          for name in ('qpos', 'qvel', 'ctrl', 'qfrc_applied', 'xfrc_applied')}
             original()
             q=group.robot.data.joint_pos[:,group.joint_ids]
             limits=task.scene.joint_limits
@@ -75,6 +85,26 @@ def main():
                 assert bool(torch.isfinite(distances).all())
                 worlds=wp.to_torch(data.contact.worldid)[:count].long()
                 maximum.scatter_reduce_(0,worlds,(-distances).clamp_min(0),reduce='amax',include_self=True)
+            if trace_local is not None:
+                after = {name: wp.to_torch(getattr(data, name))[trace_local].cpu().clone()
+                         for name in ('qpos', 'qvel', 'qacc', 'actuator_force', 'qfrc_actuator',
+                                      'qfrc_constraint', 'qfrc_passive')}
+                mask = wp.to_torch(data.contact.worldid)[:count].long() == trace_local
+                contacts = {name: wp.to_torch(getattr(data.contact, name))[:count][mask].cpu().clone()
+                            for name in ('dist', 'geom', 'pos', 'frame', 'dim')}
+                world52_trace.append(dict(physics_step=len(world52_trace)+1, before=before,
+                                          after=after, contacts=contacts))
+                model = group.sim.mj_model
+                # Save after each substep so a timed/physical stop retains evidence.
+                torch.save(dict(world=52, physics_dt=model.opt.timestep,
+                    geom_names=[model.geom(i).name for i in range(model.ngeom)],
+                    geom_bodies=[model.body(int(i)).name for i in model.geom_bodyid],
+                    joint_names=[model.joint(i).name for i in range(model.njnt)],
+                    joint_qposadr=torch.tensor(model.jnt_qposadr.copy()),
+                    joint_dofadr=torch.tensor(model.jnt_dofadr.copy()), steps=world52_trace,
+                    scope='Native pre-step q/qd/controls/applied forces and post-step q/qd/solver forces. '
+                          'Contact arrays belong to the solve and are not recomputed at the post-integration pose.'),
+                    args.output/'world52_trace.pt')
             group.deep_streak=(group.deep_streak+1)*(maximum>.005)
             report['max_depth_m']=max(report['max_depth_m'],float(maximum.max()))
             report['max_consecutive_substeps_over_5mm']=max(report['max_consecutive_substeps_over_5mm'],int(group.deep_streak.max()))
