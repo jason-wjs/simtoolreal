@@ -25,7 +25,7 @@ def equal_tree(a, b):
         return a.keys() == b.keys() and all(equal_tree(a[k], b[k]) for k in a)
     if isinstance(a, (list, tuple)):
         return len(a) == len(b) and all(equal_tree(x, y) for x, y in zip(a, b))
-    return a == b
+    return bool(a == b)
 
 
 original_epoch = A2CAgent.train_epoch
