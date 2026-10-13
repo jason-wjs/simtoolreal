@@ -1566,11 +1566,24 @@ class SimToolReal(VecTask):
             obs_queue=self.obs_queue,
             action_queue=self.action_queue,
             object_state_queue=self.object_state_queue,
+            object_scale_noise_multiplier=self.object_scale_noise_multiplier,
+            obs_buf=self.obs_buf,
+            states_buf=self.states_buf,
+            rew_buf=self.rew_buf,
+            randomize_buf=self.randomize_buf,
+            control_steps=self.control_steps,
+            _tyler_curriculum_scale=self._tyler_curriculum_scale,
+            _last_tyler_curriculum_update=self._last_tyler_curriculum_update,
+            checkpoint_rng=dict(python=random.getstate(), numpy=np.random.get_state(),
+                                torch=torch.get_rng_state(), cuda=torch.cuda.get_rng_state_all()),
         )
 
     def set_env_state(self, env_state):
         if env_state is None:
             return
+
+        env_state = dict(env_state)
+        checkpoint_rng = env_state.pop("checkpoint_rng", None)
 
         rewards_episode = env_state.get("rewards_episode", None)
         if rewards_episode is not None:
@@ -1615,6 +1628,12 @@ class SimToolReal(VecTask):
             tensor_reset=False,
         )
         self.set_actor_root_state_tensor_indexed()
+        self.set_dof_state_tensor_indexed()
+        if checkpoint_rng is not None:
+            random.setstate(checkpoint_rng['python'])
+            np.random.set_state(checkpoint_rng['numpy'])
+            torch.set_rng_state(checkpoint_rng['torch'].cpu())
+            torch.cuda.set_rng_state_all([state.cpu() for state in checkpoint_rng['cuda']])
         print(
             f"Success tolerance value after loading from checkpoint: {self.success_tolerance}"
         )
