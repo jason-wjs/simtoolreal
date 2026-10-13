@@ -31,7 +31,7 @@ def main():
         'task.sim.dt': 1e-6, 'task.sim.substeps': 1, 'task.sim.physx.contact_collection': 1})
     report = dict(status='running', num_envs=env.num_envs, calibration=[],
         script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        source_hashes={}, scope='Saved-pose native initialOverlap queries at all original24576 reset tuples; same1200 assets/all-world properties/grid, CPU tensors plus GPU PhysX. No policy or training. Two saved worlds calibrate body reconstruction; no full-pool original GPU body-pose capture exists.')
+        source_hashes={}, readbacks=[], scope='Saved-pose native initialOverlap queries at all original24576 reset tuples; same1200 assets/all-world properties/grid, CPU tensors plus GPU PhysX. No policy or training. Two saved worlds calibrate body reconstruction; no full-pool original GPU body-pose capture exists.')
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     def load(name, label):
@@ -48,6 +48,14 @@ def main():
         assert env.gym.set_dof_position_target_tensor(env.sim, gymtorch.unwrap_tensor(targets))
         for kind in ('actor_root', 'dof', 'rigid_body'):
             getattr(env.gym, 'refresh_' + kind + '_state_tensor')(env.sim)
+        path = args.output.parent / ('readback_' + str(len(report['readbacks'])) + '.pt')
+        torch.save(dict(requested_root=roots, actual_root=env.root_state_tensor.clone(),
+            requested_dof=dofs, actual_dof=env.dof_state.clone()), path)
+        delta = (env.root_state_tensor - roots).abs()
+        worst = int(delta.argmax())
+        report['readbacks'].append(dict(file=path.name, max_root_error=float(delta.max()),
+            worst_actor=worst // 13, worst_component=worst % 13,
+            max_dof_error=float((env.dof_state - dofs).abs().max())))
         assert torch.equal(env.dof_state, dofs)
         assert torch.allclose(env.root_state_tensor, roots, atol=1e-6, rtol=0)
         return roots, dofs, targets
