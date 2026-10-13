@@ -123,9 +123,23 @@ checked. This path is implemented but not GPU-verified; the queued lifecycle
 probe now includes a same-process disk roundtrip. No separate-process recovery
 or identical future contact trajectory is claimed.
 
+`train.py` loads the original env+agent YAML with resolved Hydra references,
+constructs the concrete task, and uses the vendored Runner with six SAPG cohorts.
+It shares the unchanged native metric observer with Lab. The CLI requires an
+explicit final epoch and output directory; run it only under a finite GPU guard.
+
+A CPU fixture exercises this same runner/adapter path with full native networks,
+140actor/162critic inputs, six cohorts, six synthetic environments, small batches
+and AMP disabled. Actual rollout/update/save/restore/update advances epoch2→3
+and frames192→288. All13 checked learner/task groups restore exactly, actor
+weights change, both optimizers advance and all tensors stay finite. Evidence:
+`outputs/mjlab-native-learner-cpu-20261013/result.json`. This verifies learner
+integration, not native physics or separate-process simulator recovery.
+
 ## Remaining
 
-Live task rollout/checkpoint validation and the SAPG training entry point remain to implement. Full native contact acceptance,
+Live task rollout/checkpoint validation, GPU learner updates, separate-process
+full continuation and native evaluation remain to verify. Full native contact acceptance,
 training/save/restore and evaluation remain to verify.
 No working training environment, physical contact acceptance or reproduction
 result is claimed by the tool-asset check.
