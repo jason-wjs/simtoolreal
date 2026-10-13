@@ -16,11 +16,11 @@ from deployment.isaac.isaac_env import create_env_from_cfg, merge_cfg_with_defau
 from deployment.rl_player_utils import read_cfg_omegaconf
 
 
-def scene_properties(env):
+def scene_properties(env, env_id=0):
     rows = []
     shape_fields = ('compliance', 'contact_offset', 'filter', 'friction', 'rest_offset',
                     'restitution', 'rolling_friction', 'thickness', 'torsion_friction')
-    instance = env.envs[0]
+    instance = env.envs[env_id]
     for actor in range(env.gym.get_actor_count(instance)):
         row = dict(name=env.gym.get_actor_name(instance, actor), bodies=[],
                    body_names=env.gym.get_actor_rigid_body_names(instance, actor))

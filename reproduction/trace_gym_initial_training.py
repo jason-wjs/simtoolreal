@@ -1,20 +1,50 @@
 """Capture one native full-scale training step before any optimizer update."""
-from isaacgym import gymapi
+from isaacgym import gymapi, gymtorch
 import hashlib
 import json
 from pathlib import Path
 import runpy
+import shutil
 import torch
 import profile_gym_training as profile
+from isaacgymenvs.tasks.simtoolreal.env import SimToolReal
+from check_gym_pipeline_replay import scene_properties
+
+
+original_after_created = SimToolReal._after_envs_created
+
+
+def preserve_assets(env):
+    original_after_created(env)
+    # Hydra has already changed cwd to this run's directory. Preserve the
+    # actually loaded files before the task deletes its temporary directory.
+    directory = Path.cwd() / 'trace_assets'
+    directory.mkdir()
+    env._trace_asset_hashes = []
+    for index, source in enumerate(env.object_asset_files):
+        target = directory / (str(index) + '.urdf')
+        shutil.copyfile(source, target)
+        env._trace_asset_hashes.append(hashlib.sha256(target.read_bytes()).hexdigest())
+
+
+SimToolReal._after_envs_created = preserve_assets
 
 
 class Observer:
     def __init__(self, env, output):
         self.env, self.native, self.output = env, env.gym, output
         self.records = []
+        self.wrenches = []
 
     def __getattr__(self, name):
         return getattr(self.native, name)
+
+    def apply_rigid_body_force_tensors(self, sim, forces, torques, space):
+        path = self.output / ('wrench_' + str(len(self.wrenches)) + '.pt')
+        torch.save(dict(forces=gymtorch.wrap_tensor(forces).cpu().clone(),
+                        torques=gymtorch.wrap_tensor(torques).cpu().clone()), path)
+        self.wrenches.append(dict(file=path.name, space=int(space)))
+        return self.native.apply_rigid_body_force_tensors(sim, forces, torques, space)
 
     def snapshot(self, label):
         env = self.env
@@ -22,11 +52,13 @@ class Observer:
         try:
             self.native.refresh_actor_root_state_tensor(env.sim)
             self.native.refresh_dof_state_tensor(env.sim)
+            self.native.refresh_rigid_body_state_tensor(env.sim)
             tensors = dict(staged_root=staged_root.cpu(), staged_dof=staged_dof.cpu(),
                            native_root=env.root_state_tensor.cpu().clone(),
                            native_dof=env.dof_state.cpu().clone(), targets=env.cur_targets.cpu().clone(),
                            lower=env.arm_hand_dof_lower_limits.cpu(), upper=env.arm_hand_dof_upper_limits.cpu(),
-                           object_indices=env.object_indices.cpu())
+                           object_indices=env.object_indices.cpu(),
+                           selected_bodies=env.rigid_body_states[[12965, 15208]].cpu().clone())
             q = tensors['native_dof'].view(env.num_envs, -1, 2)[:, :env.num_hand_arm_dofs, 0]
             excess = torch.maximum(tensors['lower'] - q, q - tensors['upper']).clamp_min(0)
             worst = int(excess.argmax())
@@ -50,6 +82,9 @@ def step(self, *args, **kwargs):
     env = self.vec_env.env
     assert env.num_envs == 24576 and env.control_freq_inv == 1 and not env.randomize
     output = Path(self.config['train_dir'])
+    assert (output / 'trace_assets/0.urdf').is_file()
+    digest = profile.static_scene_digest(env)
+    properties = {str(i): scene_properties(env, i) for i in [12965, 15208]}
     observer = Observer(env, output)
     observer.snapshot('before_env_step')
     torch.save(args[0].detach().cpu(), output / 'policy_actions.pt')
@@ -63,6 +98,9 @@ def step(self, *args, **kwargs):
     (output / 'initial_training_trace.json').write_text(json.dumps(dict(
         status='completed_one_step_no_update', records=observer.records, num_envs=env.num_envs,
         object_assets=[str(p) for p in env.object_asset_files],
+        asset_sha256=env._trace_asset_hashes, native_scene_digest=digest,
+        selected_worlds=[12965, 15208], selected_properties=properties,
+        wrenches=observer.wrenches,
         dt=params.dt, substeps=params.substeps, position_iterations=params.physx.num_position_iterations,
         script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         scope='One native training env_step, before updates. Native readback and original command staging retained separately; no live GPU-pipeline contact-depth query.'), indent=2) + '\n')
