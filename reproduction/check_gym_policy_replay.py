@@ -126,10 +126,13 @@ def main():
     parser.add_argument('--disable-thumb-index-contact', action='store_true')
     parser.add_argument('--position-iterations', type=int, choices=[8, 32, 128],
                         help='Diagnostic native solver convergence; retain collisions and timestep')
+    parser.add_argument('--restart-after', type=int, choices=[77, 219],
+                        help='Restore a saved contact-entry state, then replay its next32commands')
     args = parser.parse_args()
     assert (args.source is None) == (args.mode == 'capture')
     assert not args.disable_thumb_index_contact or args.mode == 'gpu_replay'
     assert args.position_iterations is None or (args.mode == 'gpu_replay' and not args.disable_thumb_index_contact)
+    assert args.restart_after is None or (args.mode == 'gpu_replay' and not args.disable_thumb_index_contact)
     random.seed(42); np.random.seed(42); torch.manual_seed(42); torch.cuda.manual_seed_all(42)
     source = json.loads(args.source.read_text()) if args.source else None
 
@@ -188,8 +191,18 @@ def main():
                         row[2] = mask
                     assert modified == expected
                     metadata['modified_properties'] = modified
-                root = torch.tensor(source['initial']['root'], dtype=torch.float32, device=env.device)
-                dof = torch.tensor(source['initial']['dof'], dtype=torch.float32, device=env.device)
+                requested_initial = source['initial'] if args.restart_after is None else source['trace'][args.restart_after]
+                replay_rows = source['trace'] if args.restart_after is None else source['trace'][args.restart_after+1:args.restart_after+33]
+                if args.restart_after is not None:
+                    assert len(replay_rows) == 32 and requested_initial['step'] == args.restart_after
+                    metadata['restart_after'] = args.restart_after
+                    metadata['restart_scope'] = 'Restore saved root/DOF states and previous PD target. Solver/contact history is not restored; compare8-iteration restart with uninterrupted source before equivalence claims.'
+                    previous_target = next(c['value'] for c in requested_initial['commands'] if c['name']=='set_dof_position_target_tensor')
+                    initial_target = torch.tensor(previous_target,dtype=torch.float32,device=env.device)
+                    assert env.gym.set_dof_position_target_tensor(env.sim,gymtorch.unwrap_tensor(initial_target))
+                    metadata['initial_pd_target'] = previous_target
+                root = torch.tensor(requested_initial['root'], dtype=torch.float32, device=env.device)
+                dof = torch.tensor(requested_initial['dof'], dtype=torch.float32, device=env.device)
                 assert env.gym.set_actor_root_state_tensor(env.sim, gymtorch.unwrap_tensor(root))
                 assert env.gym.set_dof_state_tensor(env.sim, gymtorch.unwrap_tensor(dof))
                 actual = snapshot(env)
@@ -204,15 +217,18 @@ def main():
                                       quaternion_component=float(error[:, 3:7].max()), velocity_component=float(error[:, 7:].max()))
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.with_suffix('.initial.json').write_text(json.dumps(dict(
-                    requested=source['initial'], actual=actual, source_sha256=metadata['source_sha256'],
+                    requested=requested_initial, actual=actual, source_sha256=metadata['source_sha256'],
                     script_sha256=metadata['script_sha256'], errors=initial_errors)) + '\n')
                 assert initial_errors['position_m'] < 1e-7 and initial_errors['rotation_rad'] < 1e-6
                 assert initial_errors['velocity_component'] == 0
-                assert actual['dof'] == source['initial']['dof']
+                assert actual['dof'] == requested_initial['dof']
+                if args.restart_after is not None:
+                    metadata['initial_body_position_component_error_m'] = float(np.max(np.abs(
+                        np.asarray(actual['bodies'])[:, :3] - np.asarray(requested_initial['bodies'])[:, :3])))
                 metadata['initial'] = actual
                 metadata['initial_readback_errors'] = initial_errors
                 rows, deep_streak = [], 0
-                for recorded in source['trace']:
+                for recorded in replay_rows:
                     retained = []
                     for command in recorded['commands']:
                         value = torch.tensor(command['value'], dtype=torch.float32, device=env.device)
@@ -226,7 +242,7 @@ def main():
                         else:
                             assert method(env.sim, gymtorch.unwrap_tensor(value))
                     env.gym.simulate(env.sim); env.gym.fetch_results(env.sim, True)
-                    row = dict(step=len(rows), **snapshot(env))
+                    row = dict(step=recorded['step'], **snapshot(env))
                     if args.mode == 'cpu_replay':
                         contacts = env.gym.get_env_rigid_contacts(env.envs[0])
                         row['contacts'] = [{k: int(c[k]) if k in ['body0', 'body1'] else float(c[k])
