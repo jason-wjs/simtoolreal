@@ -3,6 +3,7 @@ from isaacgym import gymapi, gymtorch
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 import torch
 from isaacgymenvs.tasks.simtoolreal.env import SimToolReal
@@ -30,10 +31,34 @@ def main():
     SimToolReal._main_object_assets_and_scales = lambda self, object_asset_root, tmp_assets_dir: (assets, [(1., 1., 1.)] * 2, [False] * 2)
     cfg = merge_cfg_with_default_config(read_cfg_omegaconf(str(source / 'native/.hydra/config.yaml'), 'cuda:0'))
     cfg.task.sim.physx.use_gpu = True
+    native = gymapi.acquire_gym()
+
+    class OriginMatchedGym:
+        def __init__(self):
+            self.created = 0
+            self.selected = 0
+
+        def __getattr__(self, name):
+            return getattr(native, name)
+
+        def create_env(self, sim, lower, upper, num_per_row):
+            # Preserve the original grid indices and bounds to avoid changing
+            # float32 world-coordinate precision during local pose calibration.
+            original_row = int(math.sqrt(trace['num_envs']))
+            while self.created < worlds[self.selected]:
+                native.create_env(sim, lower, upper, original_row)
+                self.created += 1
+            instance = native.create_env(sim, lower, upper, original_row)
+            self.created += 1
+            self.selected += 1
+            return instance
+
+    gymapi.acquire_gym = lambda: OriginMatchedGym()
     env = create_env_from_cfg(cfg, headless=True, overrides={
         'pipeline': 'cpu', 'graphics_device_id': -1, 'task.env.numEnvs': 2,
         'task.sim.dt': 1e-6, 'task.sim.substeps': 1, 'task.sim.physx.contact_collection': 1})
     report = dict(status='running', cases=[], worlds=worlds,
+        query_env_origins=[[v.x, v.y, v.z] for v in [env.gym.get_env_origin(e) for e in env.envs]],
         script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         scope='Two original training assets/properties, CPU tensor pipeline plus GPU PhysX. Post-integration GPU body poses calibrate reconstruction before common pre-integration root/DOF poses are queried. Tiny-step raw initialOverlap, not a dynamics replay.')
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -57,6 +82,8 @@ def main():
             assert torch.allclose(torch.tensor(before['root']), roots, atol=1e-6, rtol=0)
             errors = [pose_error(before['bodies'][i], state['selected_bodies'][i].tolist()) for i in range(2)]
             if label == 'after_env_step':
+                report.setdefault('calibration_attempts', []).append(dict(source=name, errors=errors,
+                    actual_body_poses=before['bodies'], expected_body_poses=state['selected_bodies'].tolist()))
                 assert all(e['position_m'] <= 1e-5 and e['rotation_rad'] <= 1e-4 for e in errors), errors
             env.gym.simulate(env.sim); env.gym.fetch_results(env.sim, True)
             contacts = []
