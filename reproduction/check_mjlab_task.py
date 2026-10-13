@@ -88,16 +88,34 @@ def main():
             torch.testing.assert_close(actual[key], states[key], atol=1e-6, rtol=0)
         torch.testing.assert_close(actual['object_pose'], states['object_state'][:, :7], atol=1e-6, rtol=0)
         maximum = 0.
-        for _, group in task.scene.groups:
+        contact_snapshot = []
+        for ids, group in task.scene.groups:
             data = group.sim.wp_data
             count = int(wp.to_torch(data.nacon)[0])
             assert count <= data.naconmax
+            model = group.sim.mj_model
+            # Preserve the actual collision inputs before a failed gate exits.
+            # CPU reconstruction of saved poses alone cannot explain the
+            # observed CPU/Warp initial-contact disagreement.
+            contact_snapshot.append(dict(
+                global_ids=ids.cpu(),
+                geom_names=[model.geom(i).name for i in range(model.ngeom)],
+                body_names=[model.body(int(b)).name for b in model.geom_bodyid],
+                model={name: getattr(group.sim.model, name).cpu().clone()
+                       for name in ('geom_size', 'geom_pos', 'geom_quat', 'geom_aabb', 'geom_rbound')},
+                data={name: wp.to_torch(getattr(data, name)).cpu().clone()
+                      for name in ('qpos', 'geom_xpos', 'geom_xmat')},
+                contacts={name: wp.to_torch(getattr(data.contact, name))[:count].cpu().clone()
+                          for name in ('dist', 'geom', 'worldid', 'pos', 'frame', 'dim')},
+            ))
             if count:
                 distances = wp.to_torch(data.contact.dist)[:count]
                 assert bool(torch.isfinite(distances).all())
                 maximum = max(maximum, float((-distances).clamp_min(0).max()))
         report['fixed_reset_fixture']['native_initial_max_depth_m'] = maximum
         report['fixed_reset_fixture']['native_state_readback_passed'] = True
+        torch.save(contact_snapshot, args.output/'initial_contacts.pt')
+        (args.output/'initial_gate.json').write_text(json.dumps(report, indent=2)+'\n')
         assert maximum <= fixture['metadata']['threshold_m'], maximum
     actions=torch.zeros(1536,29,device=task.device)
     rollout=time.monotonic()
