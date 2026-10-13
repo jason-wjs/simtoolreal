@@ -15,13 +15,18 @@ def step(self, *args, **kwargs):
         params = env.gym.get_sim_params(env.sim)
         assert env.num_envs == 24576 and self.intr_coef_block_size == 4096
         assert params.substeps == 4 and params.physx.num_position_iterations == 128
-        assert abs(params.dt - 1 / 60) < 1e-8 and params.use_gpu_pipeline and params.physx.use_gpu
+        # Native training leaves the explicit PhysX flag at its default; Gym
+        # forces GPU PhysX when the GPU tensor pipeline is enabled.
+        assert abs(params.dt - 1 / 60) < 1e-8 and params.use_gpu_pipeline
+        assert env.root_state_tensor.is_cuda and env.dof_state.is_cuda
         assert not env.randomize
         self._candidate_step = 0
         (output / 'candidate_runtime.json').write_text(json.dumps(dict(
             num_envs=env.num_envs, object_pool_size=len(env.object_asset_files),
             dt=params.dt, substeps=params.substeps, position_iterations=params.physx.num_position_iterations,
             velocity_iterations=params.physx.num_velocity_iterations,
+            gpu_pipeline=params.use_gpu_pipeline, explicit_physx_gpu_flag=params.physx.use_gpu,
+            root_device=str(env.root_state_tensor.device), dof_device=str(env.dof_state.device),
             script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             profile_sha256=hashlib.sha256(Path(profile.__file__).read_bytes()).hexdigest(),
             scope='Every training-step native joint readback; preserve noisy task staging. No GPU-native contact-depth certification.')) + '\n')
