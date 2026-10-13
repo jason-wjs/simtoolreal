@@ -11,8 +11,9 @@ from isaaclab.app import AppLauncher
 parser = argparse.ArgumentParser()
 parser.add_argument('--run', type=Path, required=True)
 parser.add_argument('--tools', type=Path, required=True)
-parser.add_argument('--world', type=int, choices=[461, 42, 728, 969], required=True)
+parser.add_argument('--world', type=int, choices=[461, 42, 728, 969, 127, 1475, 1330, 0], required=True)
 parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--clear-impact', action='store_true', help='Replay the saved13-step clear-start CPU target sequence.')
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 launcher = AppLauncher(args)
@@ -31,7 +32,7 @@ saved = torch.load(args.run / 'native/task_state.pt', map_location='cpu', weight
 assert not initial['object_velocity'].any()
 assert not saved['wrench']['_object_forces'].any() and not saved['wrench']['_object_torques'].any()
 world = args.world
-record = json.loads((args.tools / 'manifest.json').read_text())['tools'][world]
+record = json.loads((args.tools / 'manifest.json').read_text())['tools'][world % 1200]
 cfg = SimToolRealEnvCfg()
 cfg.scene.num_envs = 1
 cfg.assets.object_urdf = str((args.tools / record['path']).resolve())
@@ -49,6 +50,16 @@ perm = env._perm_canon_to_lab
 q = tensor(initial['joint_pos'][world])[:, perm]
 qd = tensor(initial['joint_vel'][world])[:, perm]
 targets = tensor(saved['control']['_cur_targets'][world])[:, perm]
+target_sequence = saved['control']['_cur_targets'][world].unsqueeze(0)
+if args.clear_impact:
+    cpu_path = args.run / 'clear_reset_dynamics_cpu.json'
+    cpu_report = json.loads(cpu_path.read_text())
+    for name, digest in cpu_report['source_hashes'].items():
+        assert digest == hashlib.sha256((args.run / 'native' / name).read_bytes()).hexdigest()
+    case = next(c for c in cpu_report['cases'] if c['world'] == world and c['mode'] == 'native120hz')
+    target_sequence = torch.tensor(case['targets_canonical'], dtype=torch.float32)
+    assert target_sequence.shape == (13, 29)
+    torch.testing.assert_close(target_sequence[0], saved['control']['_cur_targets'][world], atol=1e-6, rtol=0)
 env.robot.write_joint_state_to_sim(q, qd)
 for label, asset in [('object', env.object), ('table', env.table), ('goal', env.goal_viz)]:
     state = torch.zeros((1, 13), device=env.device)
@@ -101,19 +112,38 @@ settings['scope'] = ('Read-only native per-shape static/dynamic/restitution tens
 (args.output / 'runtime_contact_settings.json').write_text(json.dumps(settings, indent=2) + '\n')
 env.audit_control_step = 0
 env.audit_action = np.zeros(29, dtype=np.float32)
-for substep in [1, 2]:
-    env.scene.write_data_to_sim()
-    env.sim.step(render=False)
-    env.scene.update(cfg.sim.dt)
-    env.audit_substep = substep
-    env._capture_audit_substep()
+physics_steps = 0
+stop_reason = None
+deep_streak = 0
+for control_step, canonical_targets in enumerate(target_sequence):
+    env.audit_control_step = control_step
+    env.robot.set_joint_position_target(tensor(canonical_targets)[:, perm])
+    for substep in [1, 2]:
+        env.scene.write_data_to_sim()
+        env.sim.step(render=False)
+        env.scene.update(cfg.sim.dt)
+        env.audit_substep = substep
+        env._capture_audit_substep()
+        physics_steps += 1
+        contacts = env.audit_contacts[-1]
+        depth = float(np.maximum(-contacts[:, -1], 0).max()) if len(contacts) else 0.
+        deep_streak = deep_streak + 1 if depth > .005 else 0
+        q_actual = env.audit_rows[-1]['joint_pos']
+        limit_excess = np.maximum(env.audit_joint_limits[:, 0] - q_actual,
+                                  q_actual - env.audit_joint_limits[:, 1]).clip(min=0).max()
+        if args.clear_impact and (deep_streak >= 12 or limit_excess > .05):
+            stop_reason = 'physical_review_required'
+            break
+    if stop_reason:
+        break
 env.write_audit(args.output)
 actual = env.robot.data.joint_pos[0, env._perm_lab_to_canon].cpu()
 limits = env.robot.root_physx_view.get_dof_limits()[0, env._perm_lab_to_canon.cpu()].cpu()
 violation = torch.maximum(limits[:, 0] - actual, actual - limits[:, 1]).clamp_min(0)
 gpu = final['joint_pos'][world]
 gpu_violation = torch.maximum(limits[:, 0] - gpu, gpu - limits[:, 1]).clamp_min(0)
-report = dict(world=world, tool=record, physics_steps=2, physics_dt=cfg.sim.dt,
+report = dict(world=world, tool=record, physics_steps=physics_steps, physics_dt=cfg.sim.dt,
+    planned_physics_steps=len(target_sequence)*2, stop_reason=stop_reason,
     initial_palm_max_abs_error_m=palm_error, native_initial_state_matches=True,
     canonical_joint_names=JOINT_NAMES_CANONICAL, targets_canonical=targets[0, env._perm_lab_to_canon].cpu().tolist(),
     lab_final_joint_pos=actual.tolist(), mjlab_final_joint_pos=gpu.tolist(),
@@ -127,6 +157,13 @@ report = dict(world=world, tool=record, physics_steps=2, physics_dt=cfg.sim.dt,
           'No policy, task reward, resampling, automatic reset or solver tuning. '
           'Native contact audit covers object/robot and object/table only. '
           'Backend-specific physical parameters are retained and require separate alignment audit.')
+if args.clear_impact:
+    report['target_sequence_canonical'] = target_sequence.tolist()
+    report['target_sequence_report_sha256'] = hashlib.sha256(cpu_path.read_bytes()).hexdigest()
+    report['scope'] = ('Clear-start diagnostic: exact saved initial states and13-step native zero-action target sequence; '
+        'native Lab120Hz physics,60Hz control, original assets/drives/solver, no external wrench. '
+        'No policy/reward/automatic reset or training; contact recorder covers object/robot and object/table. '
+        'Early stop on12 consecutive>5mm contact samples or>0.05rad joint violation; physical acceptance remains separate.')
 (args.output / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
 print(json.dumps(report), flush=True)
 # Avoid known headless Kit teardown stalls after all evidence has been flushed.
