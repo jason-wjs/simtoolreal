@@ -97,13 +97,22 @@ def main():
     assert env.gym.set_dof_state_tensor(env.sim, gymtorch.unwrap_tensor(dof))
     env.gym.refresh_actor_root_state_tensor(env.sim); env.gym.refresh_dof_state_tensor(env.sim)
     initial_actual = dict(root=env.root_state_tensor.cpu().tolist(), dof=env.dof_state.cpu().tolist())
+    root_error = (env.root_state_tensor.detach().cpu() - torch.tensor(initial['root'])).abs()
+    initial_errors = dict(position_m=float(root_error[:, :3].max()),
+                          quaternion_component=float(root_error[:, 3:7].max()),
+                          velocity_component=float(root_error[:, 7:].max()),
+                          dof_exact=initial_actual['dof'] == initial['dof'])
     if initial_actual != initial:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         mismatch = dict(mode=args.mode, expected=initial, actual=initial_actual,
                        source_sha256=hashlib.sha256(args.source.read_bytes()).hexdigest() if args.source else None,
                        script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
         args.output.with_suffix('.initial-mismatch.json').write_text(json.dumps(mismatch) + '\n')
-    assert initial_actual == initial, 'Initial native readback mismatch'
+    # CPU setters round-trip actor transforms through PhysX: measured position
+    # error1.86e-9m and quaternion-component error2.24e-8. Keep actual readback;
+    # tolerate at most1e-7 in these fields, with exact velocities and DOF state.
+    assert initial_errors['position_m'] < 1e-7 and initial_errors['quaternion_component'] < 1e-7, initial_errors
+    assert initial_errors['velocity_component'] == 0 and initial_errors['dof_exact'], initial_errors
     rows = []
     for step, value in enumerate(targets):
         target = torch.tensor(value, dtype=torch.float32, device=env.device)
@@ -126,7 +135,8 @@ def main():
         config_sha256=hashlib.sha256(Path('pretrained_policy/config.yaml').read_bytes()).hexdigest(),
         trajectory_sha256=hashlib.sha256(trajectory.read_bytes()).hexdigest(),
         source_sha256=hashlib.sha256(args.source.read_bytes()).hexdigest() if args.source else None,
-        properties=properties, config=config, initial=initial_actual, targets=targets, trace=rows,
+        properties=properties, config=config, initial=initial_actual, requested_initial=initial,
+        initial_readback_errors=initial_errors, targets=targets, trace=rows,
         scope='One native short-screwdriver scene,120 open-loop steps, original dt/substeps. '
               'Contact collection and tensor pipeline are separate interventions. No policy physical acceptance.')
     args.output.parent.mkdir(parents=True, exist_ok=True)
