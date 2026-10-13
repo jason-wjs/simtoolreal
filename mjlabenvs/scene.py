@@ -5,6 +5,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import mujoco
+import numpy as np
 import torch
 from mjlab.entity import EntityCfg, VariantEntityCfg
 from mjlab.scene import Scene, SceneCfg
@@ -59,12 +60,42 @@ class _Group:
             mujoco=MujocoCfg(timestep=PHYSICS_DT, iterations=20, ls_iterations=50,
                             cone='elliptic')), device=device, spec=self.scene.spec,
             variant_info=self.scene.collect_variant_info())
+        self.primitive_geometry_audit = self._write_primitive_variants(
+            tool_root, records, pool_indices, variant_assignment)
         self.scene.initialize(self.sim.mj_model, self.sim.model, self.sim.data)
         self.robot, self.object = self.scene['robot'], self.scene['object']
         self.table, self.goal = self.scene['table'], self.scene['goal']
         self.joint_ids, _ = self.robot.find_joints(JOINT_NAMES_CANONICAL, preserve_order=True)
         self.tip_ids, _ = self.robot.find_bodies(FINGERTIP_LINK_NAMES, preserve_order=True)
         self.palm_id = self.robot.find_bodies(PALM_BODY_NAME)[0][0]
+
+    def _write_primitive_variants(self, tool_root, records, pool_indices, assignment):
+        # mjlab v1.6's variant builder scatters geometry fields only for mesh
+        # slots. Its per-world inertias already vary, but primitives otherwise
+        # retain the first variant's dimensions and local pose. These arrays
+        # are already per-world: write in place to preserve captured pointers.
+        models = [object_spec(tool_root / records[i]['path']).compile() for i in pool_indices]
+        gids = [self.sim.mj_model.geom(f'object/collision_{i}').id for i in range(models[0].ngeom)]
+        fields = ('geom_size', 'geom_rbound', 'geom_aabb', 'geom_pos', 'geom_quat')
+        indices = np.asarray(assignment)
+        report = {'worlds': len(assignment), 'variants': len(models), 'before_max_absolute_error': {}}
+        for name in fields:
+            values = np.stack([getattr(model, name) for model in models])[indices].astype(np.float32)
+            if name == 'geom_aabb':
+                values = values.reshape(len(assignment), len(gids), 2, 3)
+            expected = torch.as_tensor(values, device=self.sim.device)
+            target = getattr(self.sim.model, name)
+            report['before_max_absolute_error'][name] = float((target[:, gids] - expected).abs().max())
+            target[:, gids] = expected
+            self.sim.default_model_fields[name][:, gids] = expected
+            torch.testing.assert_close(target[:, gids], expected, atol=0, rtol=0)
+        bid = self.sim.mj_model.body('object/object_root').id
+        for name in ('body_mass', 'body_inertia', 'body_ipos', 'body_iquat', 'body_invweight0'):
+            expected = torch.as_tensor(np.stack([getattr(model, name)[model.body('object_root').id]
+                for model in models])[indices].astype(np.float32), device=self.sim.device)
+            torch.testing.assert_close(getattr(self.sim.model, name)[:, bid], expected, atol=0, rtol=0)
+        report['actual_geometry_and_inertias_passed'] = True
+        return report
 
     def state(self):
         data = self.robot.data

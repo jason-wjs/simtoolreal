@@ -24,6 +24,7 @@ def main():
     start = time.monotonic()
     scene = SimToolRealScene(args.robot_assets, args.tools, 1536, 'cuda:0')
     report = {'num_envs': scene.num_envs, 'object_pool': 1200,
+              'primitive_geometry_audit': [g.primitive_geometry_audit for _, g in scene.groups],
               'group_sizes': [len(ids) for ids, _ in scene.groups],
               'physics_dt': PHYSICS_DT, 'decimation': DECIMATION,
               'setup_seconds': time.monotonic()-start, 'steps': 240,
