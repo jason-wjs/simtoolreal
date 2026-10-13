@@ -37,7 +37,7 @@ def main():
     random.seed(42); np.random.seed(42); torch.manual_seed(42); torch.cuda.manual_seed_all(42)
     report = dict(status='running', source_sha256=hashlib.sha256(args.source.read_bytes()).hexdigest(),
         script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), cases=[],
-        scope='Original GPU-policy saved poses, CPU tensor pipeline with GPU PhysX. Each query reinstalls pose and zeros velocities, holds current DOF targets, then one1us substep. Native initialOverlap belongs to this query start; no policy rollout or native GPU-pipeline contact claim.')
+        scope='Original GPU-policy saved poses, CPU tensor pipeline with GPU PhysX. Each query reinstalls pose and zeros velocities, holds current DOF targets, then one tiny substep (see dt). Native initialOverlap belongs to this query start; no policy rollout or native GPU-pipeline contact claim.')
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     def save():
