@@ -17,7 +17,9 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--checkpoint', type=Path, action='append', default=[])
+    parser.add_argument('--fall-trajectory', type=Path)
     args = parser.parse_args()
+    assert not (args.checkpoint and args.fall_trajectory)
     source = args.source.resolve()
     trace = json.loads((source / 'native/initial_training_trace.json').read_text())
     assert trace['num_envs'] == 24576 and len(trace['asset_sha256']) == 1200
@@ -92,6 +94,39 @@ def main():
             assert all(e['position_m'] <= 1e-5 and e['rotation_rad'] <= 1e-4 for e in errors), errors
             env.gym.simulate(env.sim); env.gym.fetch_results(env.sim, True)
         initial = load('native', 'pre_integrate')
+        if args.fall_trajectory:
+            trajectory = torch.load(args.fall_trajectory, map_location='cpu')
+            assert trajectory['world'] == 19396
+            assert [r['step'] for r in trajectory['states']] == list(range(97,129))
+            report.update(trajectory_sha256=hashlib.sha256(args.fall_trajectory.read_bytes()).hexdigest(),
+                trajectory=[], scope='32 actual GPU control-step poses of world19396, independently queried in its original grid. Every saved body pose is checked, each query has a moved-object negative control. No substep-peak claim.')
+            for row in trajectory['states']:
+                state = {k:v.clone() if isinstance(v,torch.Tensor) else v for k,v in initial.items()}
+                state['native_root'].view(24576,4,13)[19396] = row['root']
+                state['native_dof'].view(24576,29,2)[19396] = row['dof']
+                roots, dofs, targets = install(state)
+                actual = env.rigid_body_states[19396].tolist()
+                expected = row['bodies'].tolist()
+                error = pose_error(actual, expected)
+                record = dict(step=row['step'], pending_reset=row['pending_reset'], progress=row['progress'],
+                    original_object_root=row['root'][1].tolist(), actual_body_poses=actual,
+                    expected_body_poses=expected, body_error=error, readback_index=len(report['readbacks'])-1)
+                report['trajectory'].append(record)
+                assert error['position_m'] <= 1e-5 and error['rotation_rad'] <= 1e-4, record
+                env.gym.simulate(env.sim); env.gym.fetch_results(env.sim, True)
+                record['contacts'] = [{k:int(c[k]) if k in ('body0','body1') else float(c[k])
+                    for k in ('body0','body1','initialOverlap','minDist')}
+                    for c in env.gym.get_env_rigid_contacts(env.envs[19396])]
+                clear = roots.clone(); clear[19396*4+1,2] += 3.
+                assert env.gym.set_actor_root_state_tensor(env.sim, gymtorch.unwrap_tensor(clear))
+                assert env.gym.set_dof_state_tensor(env.sim, gymtorch.unwrap_tensor(dofs))
+                assert env.gym.set_dof_position_target_tensor(env.sim, gymtorch.unwrap_tensor(targets))
+                env.gym.simulate(env.sim); env.gym.fetch_results(env.sim, True)
+                count = sum(30 in (int(c['body0']),int(c['body1'])) for c in env.gym.get_env_rigid_contacts(env.envs[19396]))
+                record['clear_object_control_count'] = count
+                assert count == 0
+            report['status'] = 'completed'
+            return
         if args.checkpoint:
             report['scope'] = 'Sparse saved training checkpoint poses, not a continuous contact audit. Same original24576-world grid/assets/properties, native GPU PhysX/CPU tensors, original two-world body calibration and per-coordinate root-readback bounds.'
             report['snapshots'] = []
