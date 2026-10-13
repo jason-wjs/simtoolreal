@@ -135,7 +135,7 @@ def main():
     assert not args.disable_thumb_index_contact or args.mode == 'gpu_replay'
     assert args.position_iterations is None or (args.mode == 'gpu_replay' and not args.disable_thumb_index_contact)
     assert args.restart_after is None or (args.mode == 'gpu_replay' and not args.disable_thumb_index_contact)
-    assert args.switch_iterations_after is None or (args.mode=='gpu_replay' and args.position_iterations==128
+    assert args.switch_iterations_after is None or (args.mode=='gpu_replay' and args.position_iterations in (8,128)
         and args.restart_after is None and not args.disable_thumb_index_contact)
     random.seed(42); np.random.seed(42); torch.manual_seed(42); torch.cuda.manual_seed_all(42)
     source = json.loads(args.source.read_text()) if args.source else None
