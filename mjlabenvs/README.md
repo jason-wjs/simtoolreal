@@ -8,8 +8,10 @@ This is a concrete task port, separate from the archived custom grasp pilot.
 ## Implemented and checked
 
 `assets.object_spec` builds a MuJoCo spec directly from the original generated
-single-link tool URDF. It preserves each box/cylinder collision primitive,
-pose, explicit mass, center of mass and full inertia tensor. It does not
+single-link tool URDF. It preserves each box and replaces collision cylinders
+with capsules, matching the native Lab importer. USD capsule height is the
+cylindrical spine length; its hemispheres extend beyond the source cylinder.
+Pose, explicit mass, center of mass and full inertia tensor are preserved. It does not
 replace a handle/head composite by its convex hull or infer mass from the
 collision geometry. The author's cylinder/capsule inertia approximation is
 preserved as supplied; compilation agreement does not validate that modeling
@@ -27,10 +29,27 @@ On 2026-10-13, source `ba6c563` passed all 1200 CPU MuJoCo checks in the existin
 Tele mjlab environment. Maximum absolute inertia reconstruction error:
 `1.734723475976807e-18`. Evidence: `outputs/mjlab-native-tools-20261013/manifest.json`.
 
+The initial `ba6c563` check below compared URDF cylinders; it did not establish
+equivalence with native Lab's imported collision shapes. Source `99a0689` fixes
+this omission. A CPU comparison of all1200 actual baked Lab USDs now passes:
+600capsules and1700boxes, maximum dimension error7.39934e-9m and full-inertia
+error1.14979e-10. Local transforms, mass and COM pass as well. Evidence:
+`outputs/mjlab-native-tools-20261013/lab_geometry_audit.json`; the associated
+native USD export is in the study repository's ignored outputs.
+
+`robot.py` uses29 canonical joints and native PD/effort/armature settings.
+`scene.py` preserves the original env-to-tool assignment using three native
+topology groups, with robot, table, goal and tool state writes. A1536-world,
+240-policy-step PD-hold/freefall check ran successfully before the capsule fix,
+but found deep impact contacts and has not passed physical review. A corrected
+full-scene check remains necessary. Isolated box-tool/table impacts agree closely
+between CPU MuJoCo and native mjlab; this does not validate hand interactions or
+variant scene dynamics.
+
 ## Remaining
 
-Robot/table conversion and native mjlab scene, original actuator/control and
-observation/reward/reset/DR semantics, SAPG environment adapter, native contact
-audits, training/save/restore and evaluation are still to implement and verify.
+Original action delay/smoothing, observation/reward/reset/DR semantics and SAPG
+environment adapter remain to implement. Full native contact acceptance,
+training/save/restore and evaluation remain to verify.
 No working training environment, physical contact acceptance or reproduction
 result is claimed by the tool-asset check.

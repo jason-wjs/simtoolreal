@@ -28,6 +28,7 @@ def main():
               'physics_dt': PHYSICS_DT, 'decimation': DECIMATION,
               'setup_seconds': time.monotonic()-start, 'steps': 240,
               'contact_samples': 0, 'max_penetration_m': 0.,
+              'last_half_second_max_penetration_m': 0.,
               'max_joint_limit_violation_rad': 0., 'all_finite': True,
               'deep_contact_pairs': {}}
     for global_ids, group in scene.groups:
@@ -44,6 +45,9 @@ def main():
                 report['contact_samples'] += count
                 report['max_penetration_m'] = max(report['max_penetration_m'],
                                                  float((-distances).clamp_min(0).max()))
+                if group.audit_step > 420:
+                    report['last_half_second_max_penetration_m'] = max(
+                        report['last_half_second_max_penetration_m'], float((-distances).clamp_min(0).max()))
                 deep = distances < -.005
                 if bool(deep.any()):
                     pairs = wp.to_torch(data.contact.geom)[:count][deep].long()
@@ -54,8 +58,9 @@ def main():
                         indices = selected.nonzero(as_tuple=True)[0]
                         worst = indices[depths[selected].argmax()]
                         geom_ids = pair.tolist()
-                        names = [mujoco.mj_id2name(group.sim.mj_model, mujoco.mjtObj.mjOBJ_GEOM, i)
-                                 or f'geom_{i}' for i in geom_ids]
+                        model = group.sim.mj_model
+                        names = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, i)
+                                 or f'{model.body(int(model.geom_bodyid[i])).name}/geom_{i}' for i in geom_ids]
                         key = ' <-> '.join(sorted(names))
                         entry = report['deep_contact_pairs'].setdefault(key, {'samples': 0, 'max_depth_m': 0.})
                         entry['samples'] += int(selected.sum())
