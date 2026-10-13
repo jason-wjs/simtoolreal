@@ -2,6 +2,7 @@
 from isaacgym import gymapi, gymtorch
 import hashlib
 import json
+import os
 from pathlib import Path
 import runpy
 import shutil
@@ -72,6 +73,13 @@ class Observer:
             env.dof_state.copy_(staged_dof)
 
     def simulate(self, sim):
+        if os.environ.get('DEXHAND_INITIAL_OBJECT_CLEARANCE') == '1':
+            # Causal probe only: move the two observed worst tools out of contact
+            # after the original reset/control/wrench commands, before integration.
+            indices = self.env.object_indices[[12965, 15208]].to(dtype=torch.int32)
+            self.env.root_state_tensor[indices.long(), 2] += 3.
+            assert self.native.set_actor_root_state_tensor_indexed(sim,
+                gymtorch.unwrap_tensor(self.env.root_state_tensor), gymtorch.unwrap_tensor(indices), 2)
         self.snapshot('pre_integrate')
         self.native.simulate(sim)
         self.native.fetch_results(sim, True)
@@ -101,6 +109,7 @@ def step(self, *args, **kwargs):
         asset_sha256=env._trace_asset_hashes, native_scene_digest=digest,
         selected_worlds=[12965, 15208], selected_properties=properties,
         wrenches=observer.wrenches,
+        object_clearance_worlds=[12965, 15208] if os.environ.get('DEXHAND_INITIAL_OBJECT_CLEARANCE') == '1' else [],
         dt=params.dt, substeps=params.substeps, position_iterations=params.physx.num_position_iterations,
         script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         scope='One native training env_step, before updates. Native readback and original command staging retained separately; no live GPU-pipeline contact-depth query.'), indent=2) + '\n')
