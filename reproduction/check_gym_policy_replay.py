@@ -36,6 +36,38 @@ def joint_excess(row, env):
                                q - env.arm_hand_dof_upper_limits.cpu()).clamp_min(0).max())
 
 
+def disable_thumb_index_contacts(env):
+    """Diagnostic only: remove four thumb/index pairs, verify other filters unchanged."""
+    instance, actor = env.envs[0], 0
+    names = env.gym.get_actor_rigid_body_names(instance, actor)
+    spans = env.gym.get_actor_rigid_body_shape_indices(instance, actor)
+    properties = env.gym.get_actor_rigid_shape_properties(instance, actor)
+    before = [p.filter for p in properties]
+    assert not any(mask & (1 << 30) for mask in before)
+    owners = {}
+    selected = {'left_thumb_PP', 'left_thumb_DP', 'left_index_MP', 'left_index_DP'}
+    assert selected.issubset(names)
+    for name, span in zip(names, spans):
+        for i in range(span.start, span.start + span.count):
+            owners[i] = name
+            if name in selected:
+                properties[i].filter |= 1 << 30
+    env.gym.set_actor_rigid_shape_properties(instance, actor, properties)
+    after = [p.filter for p in env.gym.get_actor_rigid_shape_properties(instance, actor)]
+    assert after == [p.filter for p in properties]
+    changed = set()
+    for i in range(len(before)):
+        for j in range(i):
+            if bool(before[i] & before[j]) != bool(after[i] & after[j]):
+                assert not before[i] & before[j] and after[i] & after[j]
+                changed.add(tuple(sorted((owners[i], owners[j]))))
+    expected = {tuple(sorted((a,b))) for a in ('left_thumb_PP','left_thumb_DP')
+                for b in ('left_index_MP','left_index_DP')}
+    assert changed == expected, changed
+    return dict(removed_pairs=sorted(changed), before_filters=before, after_filters=after,
+                scope='Contact-causality probe; disabling physical contacts is not a repair.')
+
+
 class CommandRecorder:
     """Read-only interception of the native task's concrete physics writes."""
     def __init__(self, env):
@@ -89,8 +121,10 @@ def main():
     parser.add_argument('--checkpoint-path', type=Path, default=Path('pretrained_policy/model.pth'))
     parser.add_argument('--match-released-velocity-noise', action='store_true',
                         help='Diagnostic: set task joint-velocity observation noise to released value0.01')
+    parser.add_argument('--disable-thumb-index-contact', action='store_true')
     args = parser.parse_args()
     assert (args.source is None) == (args.mode == 'capture')
+    assert not args.disable_thumb_index_contact or args.mode == 'gpu_replay'
     random.seed(42); np.random.seed(42); torch.manual_seed(42); torch.cuda.manual_seed_all(42)
     source = json.loads(args.source.read_text()) if args.source else None
 
@@ -130,6 +164,14 @@ def main():
                 assert properties == source['properties']
                 assert metadata['config_sha256'] == source['config_sha256']
                 assert metadata['checkpoint_sha256'] == source['checkpoint_sha256']
+                if args.disable_thumb_index_contact:
+                    metadata['contact_intervention'] = disable_thumb_index_contacts(env)
+                    modified = scene_properties(env)
+                    expected = json.loads(json.dumps(properties))
+                    for row, mask in zip(expected[0]['shapes'], metadata['contact_intervention']['after_filters']):
+                        row[2] = mask
+                    assert modified == expected
+                    metadata['modified_properties'] = modified
                 root = torch.tensor(source['initial']['root'], dtype=torch.float32, device=env.device)
                 dof = torch.tensor(source['initial']['dof'], dtype=torch.float32, device=env.device)
                 assert env.gym.set_actor_root_state_tensor(env.sim, gymtorch.unwrap_tensor(root))
