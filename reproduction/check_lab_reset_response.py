@@ -74,6 +74,31 @@ env._cur_targets[:] = targets
 before = lab_snapshot(env, torch.zeros(1, cfg.observation_space, device=env.device),
                       torch.zeros(1, 29, device=env.device))
 (args.output / 'initial_native.json').write_text(json.dumps(before, indent=2) + '\n')
+# Runtime material tensors and resolved USD bindings are different evidence:
+# the tensor API exposes coefficients but not native friction-combine enums.
+from pxr import UsdPhysics, UsdShade
+import omni.usd
+stage = omni.usd.get_context().get_stage()
+settings = dict(material_tensors={}, collision_bindings=[], physics_attributes=[])
+for label, asset in [('robot', env.robot), ('object', env.object), ('table', env.table)]:
+    settings['material_tensors'][label] = asset.root_physx_view.get_material_properties().cpu().tolist()
+for prim in stage.Traverse():
+    if not str(prim.GetPath()).startswith('/World'):
+        continue
+    attrs = {a.GetName(): str(a.Get()) for a in prim.GetAttributes()
+             if a.GetName().startswith(('physx', 'physics:')) and a.Get() is not None}
+    if attrs:
+        settings['physics_attributes'].append(dict(path=str(prim.GetPath()),
+            schemas=list(prim.GetAppliedSchemas()), values=attrs))
+    if prim.HasAPI(UsdPhysics.CollisionAPI):
+        material, relationship = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial(materialPurpose='physics')
+        settings['collision_bindings'].append(dict(path=str(prim.GetPath()),
+            material_path=str(material.GetPath()) if material else None,
+            relationship_path=str(relationship.GetPath()) if relationship else None))
+settings['scope'] = ('Read-only native per-shape static/dynamic/restitution tensors and runtime '
+    'USD resolved physics bindings/schema attributes. Native tensor material overrides '
+    'need not appear in USD. No direct native combine-mode getter or friction-force identification.')
+(args.output / 'runtime_contact_settings.json').write_text(json.dumps(settings, indent=2) + '\n')
 env.audit_control_step = 0
 env.audit_action = np.zeros(29, dtype=np.float32)
 for substep in [1, 2]:
