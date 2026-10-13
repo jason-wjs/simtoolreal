@@ -122,8 +122,8 @@ class SimToolRealScene:
             group.robot.set_joint_position_target(joint_pos[source], joint_ids=group.joint_ids,
                                                     env_ids=local[:, None])
             group.object.write_root_state_to_sim(object_state[source], env_ids=local)
-            group.table.write_root_link_pose_to_sim(table_pose[source], env_ids=local)
-            group.goal.write_root_link_pose_to_sim(goal_pose[source], env_ids=local)
+            group.table.write_mocap_pose_to_sim(table_pose[source], env_ids=local)
+            group.goal.write_mocap_pose_to_sim(goal_pose[source], env_ids=local)
             group.scene.write_data_to_sim()
             group.sim.forward()
             group.scene.update(0)
@@ -135,7 +135,7 @@ class SimToolRealScene:
             source = lookup[ids]
             local = (source >= 0).nonzero(as_tuple=True)[0]
             if local.numel():
-                group.goal.write_root_link_pose_to_sim(poses[source[local]], env_ids=local)
+                group.goal.write_mocap_pose_to_sim(poses[source[local]], env_ids=local)
                 group.sim.forward()
 
     def step(self, targets, forces, torques):
