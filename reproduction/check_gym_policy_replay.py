@@ -37,7 +37,7 @@ def joint_excess(row, env):
 
 
 def disable_thumb_index_contacts(env):
-    """Diagnostic only: remove four thumb/index pairs, verify other filters unchanged."""
+    """Diagnostic only: remove three active thumb/index pairs, verify other filters unchanged."""
     instance, actor = env.envs[0], 0
     names = env.gym.get_actor_rigid_body_names(instance, actor)
     spans = env.gym.get_actor_rigid_body_shape_indices(instance, actor)
@@ -61,8 +61,10 @@ def disable_thumb_index_contacts(env):
             if bool(before[i] & before[j]) != bool(after[i] & after[j]):
                 assert not before[i] & before[j] and after[i] & after[j]
                 changed.add(tuple(sorted((owners[i], owners[j]))))
-    expected = {tuple(sorted((a,b))) for a in ('left_thumb_PP','left_thumb_DP')
-                for b in ('left_index_MP','left_index_DP')}
+    # Native filters already suppress thumb_PP/index_MP; do not count it
+    # as an intervention or change any additional pair.
+    expected = {('left_index_DP','left_thumb_PP'),
+                ('left_index_DP','left_thumb_DP'), ('left_index_MP','left_thumb_DP')}
     assert changed == expected, changed
     return dict(removed_pairs=sorted(changed), before_filters=before, after_filters=after,
                 scope='Contact-causality probe; disabling physical contacts is not a repair.')
