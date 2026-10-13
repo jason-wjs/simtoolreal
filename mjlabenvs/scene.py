@@ -1,5 +1,6 @@
 """Original tool pool in three native mjlab topology groups, one policy batch."""
 from functools import partial
+import hashlib
 import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -19,6 +20,10 @@ from simtoolreal_shared.robot_constants import (
 
 PHYSICS_DT = 0.00833333333
 DECIMATION = 2
+# MuJoCo integration state for this fixed model (no plugins or history sensors).
+INTEGRATION_FIELDS = ('time', 'qpos', 'qvel', 'act', 'history', 'qacc_warmstart',
+                      'ctrl', 'qfrc_applied', 'xfrc_applied', 'eq_active',
+                      'mocap_pos', 'mocap_quat', 'userdata')
 
 
 def table_spec():
@@ -117,6 +122,10 @@ class SimToolRealScene:
     def __init__(self, robot_assets: Path, tool_root: Path, num_envs: int, device: str):
         assert num_envs >= 1200, 'Native pool coverage requires at least 1200 environments'
         self.num_envs, self.device = num_envs, device
+        self.asset_identity = {name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for name, path in [('tools', tool_root / 'manifest.json'),
+                               ('robot_xml', robot_assets / 'robot.xml'),
+                               ('robot_urdf', robot_assets / 'robot.urdf')]}
         records = json.loads((tool_root / 'manifest.json').read_text())['tools']
         assert len(records) == 1200
         kinds = [topology(tool_root / r['path']) for r in records]
@@ -192,3 +201,26 @@ class SimToolRealScene:
                                               dtype=values.dtype, device=self.device)
                 result[name][ids] = values
         return result
+
+    def get_state(self):
+        return dict(assets=self.asset_identity, groups=[dict(ids=ids.clone(),
+            integration={name: getattr(group.sim.data, name).clone() for name in INTEGRATION_FIELDS})
+            for ids, group in self.groups])
+
+    def set_state(self, state, targets, forces, torques):
+        assert state['assets'] == self.asset_identity
+        assert len(state['groups']) == len(self.groups)
+        for (ids, group), saved in zip(self.groups, state['groups']):
+            assert torch.equal(ids, saved['ids'].to(self.device))
+            group.sim.reset()
+            group.scene.reset()
+            group.robot.set_joint_position_target(targets[ids], joint_ids=group.joint_ids)
+            group.object.write_external_wrench_to_sim(forces[ids], torques[ids])
+            group.scene.write_data_to_sim()
+            for name in INTEGRATION_FIELDS:
+                getattr(group.sim.data, name).copy_(saved['integration'][name].to(self.device))
+            # Rebuild derived kinematics and contacts from the restored inputs.
+            # Preserve warmstart after forward, which may run the solver.
+            group.sim.forward()
+            group.sim.data.qacc_warmstart.copy_(saved['integration']['qacc_warmstart'].to(self.device))
+            group.scene.update(0)

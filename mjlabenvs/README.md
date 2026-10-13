@@ -108,9 +108,24 @@ GPU. `check_mjlab_task.py` bounds the first full-pool lifecycle check to64steps,
 records substep depth/limit violations and stops on persistent deep contact or
 large joint violations. A completed diagnostic does not imply physical acceptance.
 
+`rlgames.py` implements the original single-device SAPG interface. CPU parity
+against the installed Lab wrapper passes action detach/clone/clipping, actor and
+critic routing/clipping, done union, finite/infinite-horizon timeout handling,
+spaces and checkpoint delegation. Evidence: `rlgames_adapter_parity.json`.
+The original vendored Runner imports successfully in the existing mjlab venv
+with `reproduction/mjlab-learner-requirements.txt`; PyTorch2.7.0, NumPy1.26.0,
+MuJoCo3.12.0, mujoco-warp3.14.0 and mjlab1.6.0+gyrofix remain unchanged.
+
+Task checkpoint code saves component buffers, counters, RNG and scene integration
+fields including warmstart, applied forces, controls and mocap poses. Restore
+rebuilds derived physics and rewrites warmstart. Asset and config identity are
+checked. This path is implemented but not GPU-verified; the queued lifecycle
+probe now includes a same-process disk roundtrip. No separate-process recovery
+or identical future contact trajectory is claimed.
+
 ## Remaining
 
-Live task rollout validation and the SAPG environment adapter remain to implement. Full native contact acceptance,
+Live task rollout/checkpoint validation and the SAPG training entry point remain to implement. Full native contact acceptance,
 training/save/restore and evaluation remain to verify.
 No working training environment, physical contact acceptance or reproduction
 result is claimed by the tool-asset check.

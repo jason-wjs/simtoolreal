@@ -70,6 +70,32 @@ def main():
         report['completed_steps']=step+1
         report['terminated']+=int(terminated.sum());report['truncated']+=int(truncated.sum())
         report['last_reward_mean']=float(reward.mean())
+        if step == 0:
+            # Exercise actual native state writes, without introducing extra
+            # simulated steps into the contact diagnostic. Separate-process
+            # learner recovery remains a later gate.
+            checkpoint=task.get_state()
+            torch.save(checkpoint,args.output/'task_state.pt')
+            task.progress._successes += 1
+            task.observations._obs_queue += 1
+            for _,group in task.scene.groups:
+                group.sim.data.qvel.add_(.01)
+            task.set_state(torch.load(args.output/'task_state.pt',map_location='cpu',weights_only=False))
+            restored=task.get_state()
+            for name in ('control','progress','observations','wrench'):
+                for key,value in checkpoint[name].items():
+                    actual=restored[name][key]
+                    if isinstance(value,torch.Tensor):
+                        torch.testing.assert_close(actual,value,atol=0,rtol=0)
+                    else:
+                        assert actual==value
+            for before,after in zip(checkpoint['scene']['groups'],restored['scene']['groups']):
+                for key,value in before['integration'].items():
+                    torch.testing.assert_close(after['integration'][key],value,atol=0,rtol=0)
+            torch.testing.assert_close(restored['rng']['torch'],checkpoint['rng']['torch'],atol=0,rtol=0)
+            for a,b in zip(restored['rng']['cuda'],checkpoint['rng']['cuda']):
+                torch.testing.assert_close(a,b,atol=0,rtol=0)
+            report['same_process_task_restore_exact']=True
         if step%8==0:print(json.dumps(report),flush=True)
         # A single impact sample is distinct from sustained contact. End this
         # bounded diagnostic on persistent >5mm depth or >0.05rad violation.
@@ -80,7 +106,7 @@ def main():
     report['rollout_seconds']=time.monotonic()-rollout
     report['elapsed_seconds']=time.monotonic()-start
     report['physical_review_required']=report['max_depth_m']>.005 or report['max_joint_limit_violation_rad']>.01
-    report['scope']='Full1200tool/1536env native teacher resets, delayed zero action targets, observation/reward/done/autoreset and wrench. No learner/update/checkpoint recovery or contact acceptance claim.'
+    report['scope']='Full1200tool/1536env native teacher lifecycle and same-process task-state disk roundtrip. No learner/update/separate-process recovery or contact acceptance claim.'
     torch.save(task.scene.state(),args.output/'final.pt')
     (args.output/'result.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report),flush=True)

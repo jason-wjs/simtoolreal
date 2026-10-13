@@ -1,6 +1,9 @@
 """Native SimToolReal Lab teacher lifecycle on the concrete mjlab scene."""
 import math
+import json
+import random
 
+import numpy as np
 import torch
 
 from mjlabenvs.control import SimToolRealControl
@@ -74,3 +77,28 @@ class SimToolRealTask:
         if ids.numel():
             self._reset_idx(ids)
         return self._observe(), self.reward_buf, terminated, truncated, extras
+
+    def get_state(self):
+        return dict(config=json.dumps(self.cfg,default=vars,sort_keys=True),
+            scene=self.scene.get_state(), control=self.control.get_state(),
+            progress=self.progress.get_state(), observations=self.observations.get_state(),
+            wrench=self.wrench.get_state(), reward=self.reward_buf.clone(),
+            common_step_counter=self.common_step_counter,
+            rng=dict(python=random.getstate(), numpy=np.random.get_state(),
+                     torch=torch.get_rng_state(), cuda=torch.cuda.get_rng_state_all()))
+
+    def set_state(self, state):
+        assert state['config'] == json.dumps(self.cfg,default=vars,sort_keys=True)
+        for name in ('control','progress','observations','wrench'):
+            component=getattr(self,name)
+            saved={key:value.to(self.device) if isinstance(value,torch.Tensor) else value
+                   for key,value in state[name].items()}
+            component.set_state(saved)
+        self.reward_buf.copy_(state['reward'].to(self.device))
+        self.common_step_counter=state['common_step_counter']
+        self.scene.set_state(state['scene'],self.control._cur_targets,
+                             self.wrench._object_forces,self.wrench._object_torques)
+        random.setstate(state['rng']['python'])
+        np.random.set_state(state['rng']['numpy'])
+        torch.set_rng_state(state['rng']['torch'].cpu())
+        torch.cuda.set_rng_state_all([value.cpu() for value in state['rng']['cuda']])
