@@ -141,7 +141,8 @@ def main():
                         if 'indices' in command:
                             indices = torch.tensor(command['indices'], dtype=torch.int32, device=env.device)
                             retained.append(indices)
-                            assert method(env.sim, gymtorch.unwrap_tensor(value), gymtorch.unwrap_tensor(indices), command['count'])
+                            applied = method(env.sim, gymtorch.unwrap_tensor(value), gymtorch.unwrap_tensor(indices), command['count'])
+                            assert applied or command['count'] == 0, (recorded['step'], command['name'], command['count'])
                         else:
                             assert method(env.sim, gymtorch.unwrap_tensor(value))
                     env.gym.simulate(env.sim); env.gym.fetch_results(env.sim, True)
