@@ -133,7 +133,7 @@ def main():
     args = parser.parse_args()
     assert (args.source is None) == (args.mode == 'capture')
     assert not args.disable_thumb_index_contact or args.mode == 'gpu_replay'
-    assert args.position_iterations is None or (args.mode == 'gpu_replay' and not args.disable_thumb_index_contact)
+    assert args.position_iterations is None or (args.mode in ('capture','gpu_replay') and not args.disable_thumb_index_contact)
     assert args.restart_after is None or (args.mode == 'gpu_replay' and not args.disable_thumb_index_contact)
     assert args.switch_iterations_after is None or (args.mode=='gpu_replay' and args.position_iterations in (8,128)
         and args.restart_after is None and not args.disable_thumb_index_contact)
@@ -284,7 +284,7 @@ def main():
                 env.step(zero)  # EvalRunner.__init__ performs this first warmup.
                 player.reset()
                 obs, _, _, _ = env.step(zero)  # _run_episode then performs the second.
-                actions, observations = [], []
+                actions, observations, goal_counts = [], [], []
                 done = False
                 for _ in range(600):
                     if any(joint_excess(row, env) > .05 for row in recorder.rows[-2:]):
@@ -295,11 +295,13 @@ def main():
                     assert torch.isfinite(action).all()
                     actions.append(array(action))
                     obs, _, ended, _ = env.step(action)
+                    goal_counts.append(int(env.successes[0].item()))
                     done = bool(ended[0])
                     if done:
                         break
                 assert not recorder.pending
                 metadata.update(trace=recorder.rows, steps=len(recorder.rows), actions=actions, observations=observations,
+                    goal_counts=goal_counts, total_goal_waypoints=env.max_consecutive_successes,
                     policy_steps=len(actions), episode_done=done,
                     goal_pct=100 * int(env.successes[0].item()) / env.max_consecutive_successes)
             args.output.parent.mkdir(parents=True, exist_ok=True)
