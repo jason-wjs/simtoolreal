@@ -24,7 +24,7 @@ class Trace:
         values = gymtorch.wrap_tensor(states)
         row = dict(method=method, after_steps=self.steps, count=count)
         if indices is not None:
-            ids = gymtorch.wrap_tensor(indices)[:count].cpu().clone()
+            ids = torch.empty(0, dtype=torch.int32) if count == 0 else gymtorch.wrap_tensor(indices)[:count].cpu().clone()
             row.update(indices_sha256=hashlib.sha256(ids.numpy().tobytes()).hexdigest(),
                 includes_worst_object=bool((ids == self.object_index).any()))
         if method.startswith('set_actor_root'):
