@@ -41,10 +41,18 @@ native USD export is in the study repository's ignored outputs.
 `scene.py` preserves the original env-to-tool assignment using three native
 topology groups, with robot, table, goal and tool state writes. A1536-world,
 240-policy-step PD-hold/freefall check ran successfully before the capsule fix,
-but found deep impact contacts and has not passed physical review. A corrected
-full-scene check remains necessary. Isolated box-tool/table impacts agree closely
+but found deep impact contacts and has not passed physical review. The corrected full-scene check is finite but still flags deep contacts. Isolated box-tool/table impacts agree closely
 between CPU MuJoCo and native mjlab; this does not validate hand interactions or
 variant scene dynamics.
+
+At source `136d7a7`, the scene also corrects a native variant limitation:
+`VariantEntityCfg` scatters mesh geometry fields but leaves primitive dimensions
+and local transforms at the first variant. Original per-world geometry errors
+reached0.122m despite correct varying body inertias. The task now writes the five
+primitive geometry fields into already allocated per-world arrays and updates
+native defaults in place. The actual GPU geometry and inertial values for all1536
+worlds pass exact float32 checks against each source-compiled tool. This fixes a
+modeling error; it does not resolve all full-scene contact-quality findings.
 
 ## Remaining
 
