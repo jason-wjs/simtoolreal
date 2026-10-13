@@ -37,7 +37,7 @@ def main():
         table = torch.zeros(64, 7, device='cuda:0')
         table[:, 2], table[:, 3] = .38, 1
         scene['object'].write_root_state_to_sim(obj)
-        scene['table'].write_mocap_pose_to_sim(table)
+        scene['table'].write_mocap_pose_to_sim(table, env_ids=torch.arange(64, device='cuda:0'))
         sim.forward()
         max_depth, tail_depth = 0., 0.
         for step in range(480):
