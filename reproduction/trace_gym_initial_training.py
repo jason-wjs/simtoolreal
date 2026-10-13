@@ -37,11 +37,17 @@ class Observer:
         self.records = []
         self.wrenches = []
         self.root_writes = 0
+        self.dof_writes = self.target_writes = 0
+        fixture_path = os.environ.get('DEXHAND_INITIAL_REPLAY_FIXTURE')
+        self.fixture = torch.load(fixture_path, map_location=env.device) if fixture_path else None
+        self.fixture_hash = hashlib.sha256(Path(fixture_path).read_bytes()).hexdigest() if fixture_path else None
 
     def __getattr__(self, name):
         return getattr(self.native, name)
 
     def apply_rigid_body_force_tensors(self, sim, forces, torques, space):
+        if self.fixture is not None:
+            assert not bool(gymtorch.wrap_tensor(forces).any()) and not bool(gymtorch.wrap_tensor(torques).any())
         path = self.output / ('wrench_' + str(len(self.wrenches)) + '.pt')
         torch.save(dict(forces=gymtorch.wrap_tensor(forces).cpu().clone(),
                         torques=gymtorch.wrap_tensor(torques).cpu().clone()), path)
@@ -75,6 +81,12 @@ class Observer:
 
     def set_actor_root_state_tensor_indexed(self, sim, states, actor_indices, count):
         self.root_writes += 1
+        if self.fixture is not None:
+            values = gymtorch.wrap_tensor(states)
+            changed = (values != self.fixture['native_root']).any(dim=1)
+            changed[gymtorch.wrap_tensor(actor_indices)[:count].long()] = False
+            assert not bool(changed.any()), 'Fixture changes an actor absent from original root batch'
+            values.copy_(self.fixture['native_root'])
         if os.environ.get('DEXHAND_INITIAL_OBJECT_CLEARANCE') == '1':
             # Intervene inside the task's original batch, preserving its index
             # set and call count. A second setter can replace pending GPU writes.
@@ -85,8 +97,25 @@ class Observer:
             gymtorch.wrap_tensor(states)[indices, 2] += 3.
         return self.native.set_actor_root_state_tensor_indexed(sim, states, actor_indices, count)
 
+    def set_dof_state_tensor_indexed(self, sim, states, actor_indices, count):
+        self.dof_writes += 1
+        if self.fixture is not None:
+            assert count == self.env.num_envs
+            assert torch.equal(gymtorch.wrap_tensor(actor_indices)[:count].long().sort()[0], self.env.robot_indices.long().sort()[0])
+            gymtorch.wrap_tensor(states).copy_(self.fixture['native_dof'])
+        return self.native.set_dof_state_tensor_indexed(sim, states, actor_indices, count)
+
+    def set_dof_position_target_tensor(self, sim, targets):
+        self.target_writes += 1
+        if self.fixture is not None:
+            gymtorch.wrap_tensor(targets).view_as(self.fixture['targets']).copy_(self.fixture['targets'])
+            self.env.cur_targets.copy_(self.fixture['targets'])
+        return self.native.set_dof_position_target_tensor(sim, targets)
+
     def simulate(self, sim):
         assert self.root_writes == 1
+        if self.fixture is not None:
+            assert self.dof_writes == self.target_writes == 1
         self.snapshot('pre_integrate')
         self.native.simulate(sim)
         self.native.fetch_results(sim, True)
@@ -117,6 +146,9 @@ def step(self, *args, **kwargs):
         selected_worlds=[12965, 15208], selected_properties=properties,
         wrenches=observer.wrenches,
         root_write_count=observer.root_writes,
+        replay_fixture_sha256=observer.fixture_hash,
+        replay_fixture_metadata=observer.fixture['metadata'] if observer.fixture is not None else None,
+        physics_input_replay=observer.fixture is not None,
         object_clearance_worlds=[12965, 15208] if os.environ.get('DEXHAND_INITIAL_OBJECT_CLEARANCE') == '1' else [],
         dt=params.dt, substeps=params.substeps, position_iterations=params.physx.num_position_iterations,
         script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
