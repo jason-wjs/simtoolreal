@@ -30,6 +30,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--repeatability', action='store_true', help='Repeat observed deepest hand/object and table/object poses at half timestep, clearing object contacts between each')
     args = parser.parse_args()
     source = json.loads(args.source.read_text())
     assert source['mode']=='capture' and source['steps']==602
@@ -47,7 +48,7 @@ def main():
         cfg.task.sim.physx.use_gpu=True
         overrides=dict(overrides)
         overrides.update({'pipeline':'cpu','task.sim.physx.contact_collection':1,
-                          'task.sim.dt':1e-6,'task.sim.substeps':1})
+                          'task.sim.dt':5e-7 if args.repeatability else 1e-6,'task.sim.substeps':1})
         return create_env_from_cfg(cfg, headless=headless, overrides=overrides)
 
     class Runner:
@@ -60,7 +61,9 @@ def main():
             assert scene_properties(env)==source['properties']
             report.update(native_properties_match=True, dt=env.sim_params.dt, substeps=env.sim_params.substeps)
             try:
-                for saved in source['trace']:
+                selected = [source['trace'][i] for i in [447,18,447,18]] if args.repeatability else source['trace']
+                report['repeatability']=args.repeatability
+                for saved in selected:
                     root=torch.tensor(saved['root'], dtype=torch.float32)
                     dof=torch.tensor(saved['dof'], dtype=torch.float32)
                     root[:,7:]=0.; dof[:,1]=0.
@@ -81,7 +84,7 @@ def main():
                     contacts=env.gym.get_env_rigid_contacts(env.envs[0])
                     row['contacts']=[{k:int(c[k]) if k in ['body0','body1'] else float(c[k])
                                       for k in ['body0','body1','initialOverlap','minDist']} for c in contacts]
-                    if saved['step'] in [0,78,108,240,420,601]:
+                    if args.repeatability or saved['step'] in [0,78,108,240,420,601]:
                         # Clear object/table and object/robot geometry between queries;
                         # subsequent saved poses also test recovery after a large teleport.
                         clear=root.clone(); clear[1,2]+=3.
