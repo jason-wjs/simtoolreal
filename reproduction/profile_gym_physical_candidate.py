@@ -56,6 +56,15 @@ def step(self, *args, **kwargs):
                           object_root=env.root_state_tensor[env.object_indices[world]].cpu().tolist(),
                           reason='Native joint excess exceeds0.05rad; stop affected candidate before further updates.')
             (output / 'candidate_physical_stop.json').write_text(json.dumps(record, indent=2, allow_nan=False) + '\n')
+            if env.conditioned_reset_bank is not None:
+                # Retain the whole failed scene; a worst-world scalar cannot
+                # distinguish a fresh contact failure from a reset/restore issue.
+                torch.save(dict(native_root=env.root_state_tensor.cpu().clone(),
+                    native_dof=env.dof_state.cpu().clone(), targets=env.cur_targets.cpu().clone(),
+                    lower=env.arm_hand_dof_lower_limits.cpu(), upper=env.arm_hand_dof_upper_limits.cpu(),
+                    object_indices=env.object_indices.cpu(), table_indices=env.table_indices.cpu(),
+                    bank_rows=env.conditioned_reset_rows.cpu(), rb_forces=env.rb_forces.cpu(),
+                    rb_torques=env.rb_torques.cpu()), output / 'candidate_physical_stop_state.pt')
             raise RuntimeError('Candidate native joint physical review required')
     finally:
         env.dof_state.copy_(staged)
