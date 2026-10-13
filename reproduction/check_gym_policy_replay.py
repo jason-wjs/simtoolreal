@@ -124,9 +124,12 @@ def main():
     parser.add_argument('--match-released-velocity-noise', action='store_true',
                         help='Diagnostic: set task joint-velocity observation noise to released value0.01')
     parser.add_argument('--disable-thumb-index-contact', action='store_true')
+    parser.add_argument('--position-iterations', type=int, choices=[8, 32, 128],
+                        help='Diagnostic native solver convergence; retain collisions and timestep')
     args = parser.parse_args()
     assert (args.source is None) == (args.mode == 'capture')
     assert not args.disable_thumb_index_contact or args.mode == 'gpu_replay'
+    assert args.position_iterations is None or (args.mode == 'gpu_replay' and not args.disable_thumb_index_contact)
     random.seed(42); np.random.seed(42); torch.manual_seed(42); torch.cuda.manual_seed_all(42)
     source = json.loads(args.source.read_text()) if args.source else None
 
@@ -136,6 +139,8 @@ def main():
         overrides = dict(overrides)
         if args.match_released_velocity_noise:
             overrides['task.env.jointVelocityObsNoiseStd'] = 0.01
+        if args.position_iterations is not None:
+            overrides['task.sim.physx.num_position_iterations'] = args.position_iterations
         overrides.update({'pipeline': 'cpu' if args.mode == 'cpu_replay' else 'gpu',
                           'task.sim.physx.contact_collection': 0 if args.mode == 'capture' else 1})
         return create_env_from_cfg(cfg, headless=headless, overrides=overrides)
@@ -152,7 +157,16 @@ def main():
             properties = scene_properties(env)
             initial = snapshot(env)
             config = OmegaConf.to_container(OmegaConf.create(env.cfg), resolve=True)
+            params = env.gym.get_sim_params(env.sim)
+            runtime_solver = dict(dt=params.dt, substeps=params.substeps,
+                use_gpu_pipeline=params.use_gpu_pipeline, gpu_physx=params.physx.use_gpu,
+                solver_type=params.physx.solver_type,
+                position_iterations=params.physx.num_position_iterations,
+                velocity_iterations=params.physx.num_velocity_iterations,
+                contact_offset=params.physx.contact_offset, rest_offset=params.physx.rest_offset)
+            assert params.physx.num_position_iterations == config['sim']['physx']['num_position_iterations']
             metadata = dict(mode=args.mode, properties=properties, config=config,
+                runtime_solver=runtime_solver,
                 initial=initial, dt=env.sim_params.dt, substeps=env.sim_params.substeps,
                 script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 scene_helper_sha256=hashlib.sha256(Path(__file__).with_name('check_gym_pipeline_replay.py').read_bytes()).hexdigest(),
