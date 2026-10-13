@@ -391,7 +391,8 @@ class SimToolReal(VecTask):
             )
 
         # Init camera for wandb logging
-        self._initialize_camera_sensor(cam_pos=cam_pos, cam_target=cam_target)
+        if self.enable_camera_sensors:
+            self._initialize_camera_sensor(cam_pos=cam_pos, cam_target=cam_target)
         self._modify_render_settings_if_headless()
         self.viewer_state_frames = None
         self._viewer_capture_index = 0
