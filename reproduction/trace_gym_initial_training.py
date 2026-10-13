@@ -36,6 +36,7 @@ class Observer:
         self.env, self.native, self.output = env, env.gym, output
         self.records = []
         self.wrenches = []
+        self.root_writes = 0
 
     def __getattr__(self, name):
         return getattr(self.native, name)
@@ -72,14 +73,20 @@ class Observer:
             env.root_state_tensor.copy_(staged_root)
             env.dof_state.copy_(staged_dof)
 
-    def simulate(self, sim):
+    def set_actor_root_state_tensor_indexed(self, sim, states, actor_indices, count):
+        self.root_writes += 1
         if os.environ.get('DEXHAND_INITIAL_OBJECT_CLEARANCE') == '1':
-            # Causal probe only: move the two observed worst tools out of contact
-            # after the original reset/control/wrench commands, before integration.
-            indices = self.env.object_indices[[12965, 15208]].to(dtype=torch.int32)
-            self.env.root_state_tensor[indices.long(), 2] += 3.
-            assert self.native.set_actor_root_state_tensor_indexed(sim,
-                gymtorch.unwrap_tensor(self.env.root_state_tensor), gymtorch.unwrap_tensor(indices), 2)
+            # Intervene inside the task's original batch, preserving its index
+            # set and call count. A second setter can replace pending GPU writes.
+            assert self.root_writes == 1
+            indices = self.env.object_indices[[12965, 15208]].long()
+            submitted = gymtorch.wrap_tensor(actor_indices)[:count]
+            assert all(bool((submitted == i).any()) for i in indices)
+            gymtorch.wrap_tensor(states)[indices, 2] += 3.
+        return self.native.set_actor_root_state_tensor_indexed(sim, states, actor_indices, count)
+
+    def simulate(self, sim):
+        assert self.root_writes == 1
         self.snapshot('pre_integrate')
         self.native.simulate(sim)
         self.native.fetch_results(sim, True)
@@ -109,6 +116,7 @@ def step(self, *args, **kwargs):
         asset_sha256=env._trace_asset_hashes, native_scene_digest=digest,
         selected_worlds=[12965, 15208], selected_properties=properties,
         wrenches=observer.wrenches,
+        root_write_count=observer.root_writes,
         object_clearance_worlds=[12965, 15208] if os.environ.get('DEXHAND_INITIAL_OBJECT_CLEARANCE') == '1' else [],
         dt=params.dt, substeps=params.substeps, position_iterations=params.physx.num_position_iterations,
         script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
