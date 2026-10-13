@@ -85,9 +85,24 @@ pad offset, both keypoint geometries, identical RNG advancement, delays, partial
 reset and separate-object restore are covered. Evidence: `observation_parity.json`.
 This does not yet establish live scene velocity-frame correctness.
 
+`randomization.py` preserves baseline pose and goal sampling plus persistent
+world-frame random wrench state. Three reset cases (native, table XY/yaw,
+fixed poses) and four100-step wrench cases pass exact float32 and RNG-state
+comparisons to frozen native8e18764. Partial resets and restored wrench state
+are covered. The reset fixture uses canonical joint order and zero origins;
+actual Lab parser order consumes random samples in its own joint order, so
+cross-engine identical seeded reset vectors are not claimed. The native
+fixed-trajectory ablation is outside this teacher port and explicitly rejected.
+Evidence: `randomization_parity.json`.
+
+Installed API source confirms native Lab `body_state_w` combines link pose with
+COM velocity, matching this scene's fields. mjlab external wrench writes use
+the world frame, matching native `is_global=True`. Live numerical verification
+is still required; these are interface-source checks.
+
 ## Remaining
 
-Pose/reset/wrench semantics, full step lifecycle and
+Full step/reset lifecycle integration and
 SAPG environment adapter remain to implement. Full native contact acceptance,
 training/save/restore and evaluation remain to verify.
 No working training environment, physical contact acceptance or reproduction
