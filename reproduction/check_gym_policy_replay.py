@@ -128,13 +128,24 @@ def main():
                 assert env.gym.set_actor_root_state_tensor(env.sim, gymtorch.unwrap_tensor(root))
                 assert env.gym.set_dof_state_tensor(env.sim, gymtorch.unwrap_tensor(dof))
                 actual = snapshot(env)
+                requested_root, actual_root = root.cpu().double(), torch.tensor(actual['root'], dtype=torch.float64)
+                qa, qb = requested_root[:, 3:7], actual_root[:, 3:7]
+                na, nb = qa.norm(dim=-1, keepdim=True), qb.norm(dim=-1, keepdim=True)
+                assert (na - 1).abs().max() < 1e-6 and (nb - 1).abs().max() < 1e-6
+                qa, qb = qa / na, qb / nb
+                angle = 4 * torch.asin(torch.minimum((qa-qb).norm(dim=-1), (qa+qb).norm(dim=-1)).clamp(max=2) / 2)
+                error = (requested_root - actual_root).abs()
+                initial_errors = dict(position_m=float(error[:, :3].max()), rotation_rad=float(angle.max()),
+                                      quaternion_component=float(error[:, 3:7].max()), velocity_component=float(error[:, 7:].max()))
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.with_suffix('.initial.json').write_text(json.dumps(dict(
                     requested=source['initial'], actual=actual, source_sha256=metadata['source_sha256'],
-                    script_sha256=metadata['script_sha256'])) + '\n')
-                assert torch.max(torch.abs(torch.tensor(actual['root']) - root.cpu())) < 1e-7
+                    script_sha256=metadata['script_sha256'], errors=initial_errors)) + '\n')
+                assert initial_errors['position_m'] < 1e-7 and initial_errors['rotation_rad'] < 1e-6
+                assert initial_errors['velocity_component'] == 0
                 assert actual['dof'] == source['initial']['dof']
                 metadata['initial'] = actual
+                metadata['initial_readback_errors'] = initial_errors
                 rows, deep_streak = [], 0
                 for recorded in source['trace']:
                     retained = []
