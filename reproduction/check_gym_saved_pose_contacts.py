@@ -34,7 +34,10 @@ def main():
     parser.add_argument('--repeatability', action='store_true', help='Repeat observed deepest hand/object and table/object poses at half timestep, clearing object contacts between each')
     args = parser.parse_args()
     source = json.loads(args.source.read_text())
-    assert source['mode']=='capture' and 0<source['steps']==len(source['trace'])<=602
+    assert source['mode'] in ('capture','gpu_replay') and 0<source['steps']==len(source['trace'])<=602
+    # Pose queries must preserve the replay's collision geometry/filtering.
+    # This probe reconstructs the native scene, so reject contact-disabled replays.
+    assert 'contact_intervention' not in source
     assert hashlib.sha256(args.config_path.read_bytes()).hexdigest()==source['config_sha256']
     if args.repeatability:
         assert source['steps']==602
