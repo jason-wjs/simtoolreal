@@ -287,8 +287,8 @@ class EvalRunner:
         self.joint_lower = env.arm_hand_dof_lower_limits[: self.n_act].cpu().numpy()
         self.joint_upper = env.arm_hand_dof_upper_limits[: self.n_act].cpu().numpy()
 
-        # Load policy
-        self.env.set_env_state(torch.load(checkpoint_path)[0]["env_state"])
+        # Deployment uses the trajectory's initial state in this evaluation
+        # scene. Training task state belongs to a different parallel scene.
         self.policy = RlPlayer(
             140, self.n_act, config_path, checkpoint_path, self.device, env.num_envs
         )
