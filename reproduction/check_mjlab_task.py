@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import time
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -19,12 +20,15 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     import torch
     import warp as wp
-    from omegaconf import OmegaConf
+    import yaml
     from mjlabenvs.task import SimToolRealTask
 
     torch.manual_seed(42)
     start = time.monotonic()
-    task = SimToolRealTask(OmegaConf.load(args.config).env,args.robot_assets,args.tools,1536,'cuda:0')
+    def namespace(value):
+        return SimpleNamespace(**{k: namespace(v) for k,v in value.items()}) if isinstance(value,dict) else value
+    cfg=namespace(yaml.safe_load(args.config.read_text())['env'])
+    task = SimToolRealTask(cfg,args.robot_assets,args.tools,1536,'cuda:0')
     report = dict(num_envs=1536,object_pool=1200,planned_steps=64,completed_steps=0,
         config_sha256=hashlib.sha256(args.config.read_bytes()).hexdigest(),
         setup_seconds=time.monotonic()-start,max_episode_length=task.max_episode_length,
