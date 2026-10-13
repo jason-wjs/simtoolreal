@@ -128,11 +128,15 @@ def main():
                         help='Diagnostic native solver convergence; retain collisions and timestep')
     parser.add_argument('--restart-after', type=int, choices=[77, 219],
                         help='Restore a saved contact-entry state, then replay its next32commands')
+    parser.add_argument('--switch-iterations-after', type=int, choices=[219],
+                        help='Diagnostic: preserve native history, request live solver change before next32commands')
     args = parser.parse_args()
     assert (args.source is None) == (args.mode == 'capture')
     assert not args.disable_thumb_index_contact or args.mode == 'gpu_replay'
     assert args.position_iterations is None or (args.mode == 'gpu_replay' and not args.disable_thumb_index_contact)
     assert args.restart_after is None or (args.mode == 'gpu_replay' and not args.disable_thumb_index_contact)
+    assert args.switch_iterations_after is None or (args.mode=='gpu_replay' and args.position_iterations==128
+        and args.restart_after is None and not args.disable_thumb_index_contact)
     random.seed(42); np.random.seed(42); torch.manual_seed(42); torch.cuda.manual_seed_all(42)
     source = json.loads(args.source.read_text()) if args.source else None
 
@@ -142,7 +146,7 @@ def main():
         overrides = dict(overrides)
         if args.match_released_velocity_noise:
             overrides['task.env.jointVelocityObsNoiseStd'] = 0.01
-        if args.position_iterations is not None:
+        if args.position_iterations is not None and args.switch_iterations_after is None:
             overrides['task.sim.physx.num_position_iterations'] = args.position_iterations
         overrides.update({'pipeline': 'cpu' if args.mode == 'cpu_replay' else 'gpu',
                           'task.sim.physx.contact_collection': 0 if args.mode == 'capture' else 1})
@@ -193,6 +197,8 @@ def main():
                     metadata['modified_properties'] = modified
                 requested_initial = source['initial'] if args.restart_after is None else source['trace'][args.restart_after]
                 replay_rows = source['trace'] if args.restart_after is None else source['trace'][args.restart_after+1:args.restart_after+33]
+                if args.switch_iterations_after is not None:
+                    replay_rows = source['trace'][:args.switch_iterations_after+33]
                 if args.restart_after is not None:
                     assert len(replay_rows) == 32 and requested_initial['step'] == args.restart_after
                     metadata['restart_after'] = args.restart_after
@@ -229,6 +235,23 @@ def main():
                 metadata['initial_readback_errors'] = initial_errors
                 rows, deep_streak = [], 0
                 for recorded in replay_rows:
+                    if args.switch_iterations_after is not None and recorded['step']==args.switch_iterations_after+1:
+                        before = snapshot(env)
+                        original = source['trace'][args.switch_iterations_after]
+                        assert all(before[k]==original[k] for k in ('root','dof','bodies'))
+                        params = env.gym.get_sim_params(env.sim)
+                        params.physx.num_position_iterations = args.position_iterations
+                        env.gym.set_sim_params(env.sim,params)
+                        readback = env.gym.get_sim_params(env.sim)
+                        switch = dict(after_step=args.switch_iterations_after,
+                            requested_position_iterations=args.position_iterations,
+                            readback_position_iterations=readback.physx.num_position_iterations,
+                            states_before_exact=True, states_after_exact=snapshot(env)==before)
+                        metadata['live_solver_switch'] = switch
+                        args.output.parent.mkdir(parents=True,exist_ok=True)
+                        args.output.with_suffix('.switch.json').write_text(json.dumps(switch)+'\n')
+                        assert switch['states_after_exact']
+                        assert readback.physx.num_position_iterations==args.position_iterations, switch
                     retained = []
                     for command in recorded['commands']:
                         value = torch.tensor(command['value'], dtype=torch.float32, device=env.device)
