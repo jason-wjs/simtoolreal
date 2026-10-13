@@ -91,6 +91,9 @@ def train_epoch(self):
 
 
 def restore(self, weights, set_epoch=True):
+    missing = {'obs_queue', 'action_queue', 'object_state_queue'} - weights['env_state'].keys()
+    if missing:
+        raise ValueError(f'Checkpoint lacks delay history required for training continuation: {sorted(missing)}')
     # The native task mutates its input dictionary, so retain the saved state
     # before calling it. This is evidence only; do not compensate for differences.
     expected = copy.deepcopy(weights)

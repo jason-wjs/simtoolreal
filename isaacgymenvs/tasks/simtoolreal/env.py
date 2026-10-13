@@ -1563,6 +1563,9 @@ class SimToolReal(VecTask):
             total_episode_closest_keypoint_max_dist=self.total_episode_closest_keypoint_max_dist,
             prev_episode_closest_keypoint_max_dist=self.prev_episode_closest_keypoint_max_dist,
             frame_since_restart=self.frame_since_restart,
+            obs_queue=self.obs_queue,
+            action_queue=self.action_queue,
+            object_state_queue=self.object_state_queue,
         )
 
     def set_env_state(self, env_state):
