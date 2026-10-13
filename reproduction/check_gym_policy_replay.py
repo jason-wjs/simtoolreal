@@ -129,11 +129,15 @@ def main():
     parser.add_argument('--disable-thumb-index-contact', action='store_true')
     parser.add_argument('--position-iterations', type=int, choices=[8, 32, 128],
                         help='Diagnostic native solver convergence; retain collisions and timestep')
+    parser.add_argument('--impact-substeps', type=int, choices=[2, 4, 8],
+                        help='Replay first16 recorded commands with this substep count; retain60Hz control')
     parser.add_argument('--restart-after', type=int, choices=[77, 219],
                         help='Restore a saved contact-entry state, then replay its next32commands')
     parser.add_argument('--switch-iterations-after', type=int, choices=[219],
                         help='Diagnostic: preserve native history, request live solver change before next32commands')
     args = parser.parse_args()
+    assert args.impact_substeps is None or (args.mode=='gpu_replay' and args.position_iterations is None
+        and args.restart_after is None and args.switch_iterations_after is None and not args.disable_thumb_index_contact)
     assert (args.source is None) == (args.mode == 'capture')
     assert not args.disable_thumb_index_contact or args.mode == 'gpu_replay'
     assert args.position_iterations is None or (args.mode in ('capture','gpu_replay') and not args.disable_thumb_index_contact)
@@ -151,6 +155,8 @@ def main():
             overrides['task.env.jointVelocityObsNoiseStd'] = 0.01
         if args.position_iterations is not None and args.switch_iterations_after is None:
             overrides['task.sim.physx.num_position_iterations'] = args.position_iterations
+        if args.impact_substeps is not None:
+            overrides['task.sim.substeps'] = args.impact_substeps
         overrides.update({'pipeline': 'cpu' if args.mode == 'cpu_replay' else 'gpu',
                           'task.sim.physx.contact_collection': 0 if args.mode == 'capture' else 1})
         return create_env_from_cfg(cfg, headless=headless, overrides=overrides)
@@ -175,6 +181,7 @@ def main():
                 velocity_iterations=params.physx.num_velocity_iterations,
                 contact_offset=params.physx.contact_offset, rest_offset=params.physx.rest_offset)
             assert params.physx.num_position_iterations == config['sim']['physx']['num_position_iterations']
+            assert params.substeps == config['sim']['substeps']
             metadata = dict(mode=args.mode, properties=properties, config=config,
                 evaluation_case=dict(category=args.object_category,object=args.object_name,task=args.task_name),
                 runtime_solver=runtime_solver,
@@ -201,6 +208,10 @@ def main():
                     metadata['modified_properties'] = modified
                 requested_initial = source['initial'] if args.restart_after is None else source['trace'][args.restart_after]
                 replay_rows = source['trace'] if args.restart_after is None else source['trace'][args.restart_after+1:args.restart_after+33]
+                if args.impact_substeps is not None:
+                    replay_rows = source['trace'][:16]
+                    assert len(replay_rows)==16 and source['runtime_solver']['position_iterations']==8
+                    metadata['scope']='Initial impact diagnostic: first16 recorded commands, unchanged control dt, varied physical substeps. No closed-loop task score or full-task acceptance.'
                 if args.switch_iterations_after is not None:
                     replay_rows = source['trace'][:args.switch_iterations_after+33]
                 if args.restart_after is not None:

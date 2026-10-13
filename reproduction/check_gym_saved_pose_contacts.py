@@ -35,12 +35,14 @@ def main():
     parser.add_argument('--object-name', default='short_screwdriver')
     parser.add_argument('--task-name', default='spin_horizontal')
     parser.add_argument('--repeatability', action='store_true', help='Repeat observed deepest hand/object and table/object poses at half timestep, clearing object contacts between each')
+    parser.add_argument('--impact-controls', action='store_true', help='Moved-object negative control at every pose of a16-step impact replay')
     args = parser.parse_args()
     source = json.loads(args.source.read_text())
     assert source['mode'] in ('capture','gpu_replay') and 0<source['steps']==len(source['trace'])<=602
     # Pose queries must preserve the replay's collision geometry/filtering.
     # This probe reconstructs the native scene, so reject contact-disabled replays.
     assert 'contact_intervention' not in source
+    assert not args.impact_controls or (source['mode']=='gpu_replay' and source['steps']==16 and not args.repeatability)
     assert source['config']['env']['objectName']==args.object_name
     assert hashlib.sha256(args.config_path.read_bytes()).hexdigest()==source['config_sha256']
     if args.repeatability:
@@ -95,7 +97,7 @@ def main():
                     contacts=env.gym.get_env_rigid_contacts(env.envs[0])
                     row['contacts']=[{k:int(c[k]) if k in ['body0','body1'] else float(c[k])
                                       for k in ['body0','body1','initialOverlap','minDist']} for c in contacts]
-                    if args.repeatability or saved['step'] in [0,78,108,240,420,601]:
+                    if args.repeatability or args.impact_controls or saved['step'] in [0,78,108,240,420,601]:
                         # Clear object/table and object/robot geometry between queries;
                         # subsequent saved poses also test recovery after a large teleport.
                         clear=root.clone(); clear[1,2]+=3.
