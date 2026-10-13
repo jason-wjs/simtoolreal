@@ -54,10 +54,32 @@ native defaults in place. The actual GPU geometry and inertial values for all153
 worlds pass exact float32 checks against each source-compiled tool. This fixes a
 modeling error; it does not resolve all full-scene contact-quality findings.
 
+`control.py` preserves native action delay, smoothing and clamping in canonical
+joint order. Its 100-step CPU comparison against the frozen native implementation
+passes exact float32 targets and queues, including permuted hand order, goal hit,
+partial reset and restored control state.
+
+`progress.py` preserves the teacher reward, success/termination counters and
+tolerance curriculum. Four 100-step CPU cases match the frozen native code
+exactly for all reward terms, counters and terminations, covering consecutive
+and accumulated success, evaluation tolerance, partial reset and restored state.
+The native order clears per-goal trackers before reward computation; it is
+preserved. This check uses supplied geometric distances and does not validate
+quaternion encoding or scene geometry. Evidence: `action_parity.json` and
+`progress_parity.json` in `outputs/mjlab-native-tools-20261013`.
+
+Matched full-robot single-tool CPU/GPU controls settle below0.2mm. In the full
+batch, only3/1536 worlds had final-half-second contact maxima above5mm; exact
+final-pose CPU reconstruction instead finds0.17–0.34mm ground contacts. Those
+window maxima describe late impacts, not persistent final overlap. The diagnostic
+0.9m drop is not the original task reset distribution, and all three tools ended
+below the original fall-termination height. Impact peaks remain audit evidence;
+native-task contact acceptance is still pending.
+
 ## Remaining
 
-Original action delay/smoothing, observation/reward/reset/DR semantics and SAPG
-environment adapter remain to implement. Full native contact acceptance,
+Observation geometry/noise, pose/reset/wrench semantics, full step lifecycle and
+SAPG environment adapter remain to implement. Full native contact acceptance,
 training/save/restore and evaluation remain to verify.
 No working training environment, physical contact acceptance or reproduction
 result is claimed by the tool-asset check.
