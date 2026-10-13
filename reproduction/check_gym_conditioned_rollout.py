@@ -72,6 +72,7 @@ def rollout(self):
         scope='64 native policy steps with no optimizer updates; one explicit partial reset after16steps. Original action/observation histories and target sampling retained. Per-step native joint guard, no in-flight GPU contact-depth certification.')
     before = {k: v.detach().clone() for k, v in self.model.named_parameters()}
     try:
+        self.vec_env.set_train_info(self.frame, self)
         self.set_eval()
         with torch.no_grad():
             for block in range(4):
