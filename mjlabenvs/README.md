@@ -76,9 +76,18 @@ window maxima describe late impacts, not persistent final overlap. The diagnosti
 below the original fall-termination height. Impact peaks remain audit evidence;
 native-task contact acceptance is still pending.
 
+`observations.py` supplies native teacher actor/critic fields from canonical
+scene tensors. Four60-step CPU comparisons against frozen native0eb3edc and
+independently loaded installed Isaac Lab math pass within2e-6 absolute error
+(observed maximum9.54e-7). Native dimensions are140actor/162critic. Nonidentity
+rotations, nonzero origins, canonical joint permutations, raw fingertip versus
+pad offset, both keypoint geometries, identical RNG advancement, delays, partial
+reset and separate-object restore are covered. Evidence: `observation_parity.json`.
+This does not yet establish live scene velocity-frame correctness.
+
 ## Remaining
 
-Observation geometry/noise, pose/reset/wrench semantics, full step lifecycle and
+Pose/reset/wrench semantics, full step lifecycle and
 SAPG environment adapter remain to implement. Full native contact acceptance,
 training/save/restore and evaluation remain to verify.
 No working training environment, physical contact acceptance or reproduction
