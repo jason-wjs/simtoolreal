@@ -16,6 +16,8 @@ def main():
     parser.add_argument('--tools', type=Path, required=True)
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--fixed-reset-fixture', type=Path,
+                        help='Diagnostic only: reuse vetted per-world reset states on every episode.')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     import torch
@@ -34,6 +36,28 @@ def main():
         setup_seconds=time.monotonic()-start,max_episode_length=task.max_episode_length,
         max_depth_m=0.,max_joint_limit_violation_rad=0.,terminated=0,truncated=0,
         max_consecutive_substeps_over_5mm=0,all_finite=True)
+    fixture = None
+    if args.fixed_reset_fixture is not None:
+        fixture = torch.load(args.fixed_reset_fixture, map_location='cpu', weights_only=False)
+        metadata = fixture['metadata']
+        assert metadata['config_sha256'] == report['config_sha256']
+        assert metadata['tools_manifest_sha256'] == hashlib.sha256((args.tools/'manifest.json').read_bytes()).hexdigest()
+        assert metadata['worlds'] == 1536 and metadata['tool_pool'] == 1200 and not metadata['unresolved_worlds']
+        states = {key:value.to(task.device) for key,value in fixture['reset'].items()}
+        native_reset = task._reset_idx
+        def fixed_reset(ids):
+            # Exercise all original reset hooks while supplying this diagnostic's
+            # fixed per-world physical states, including partial episode resets.
+            original_sampler = task.sampler.full
+            task.sampler.full = lambda count: {key:value[ids] for key,value in states.items()}
+            try:
+                native_reset(ids)
+            finally:
+                task.sampler.full = original_sampler
+        task._reset_idx = fixed_reset
+        report['fixed_reset_fixture'] = dict(path=str(args.fixed_reset_fixture),
+            sha256=hashlib.sha256(args.fixed_reset_fixture.read_bytes()).hexdigest(), metadata=metadata,
+            scope='Fixed vetted reset per world on every episode. Conditional reset variant, no learner.')
     for ids,group in task.scene.groups:
         group.deep_streak = torch.zeros(len(ids),dtype=torch.long,device=task.device)
         def audit(original=group.sim.step,group=group):
@@ -58,6 +82,23 @@ def main():
     obs,_=task.reset()
     assert obs['policy'].shape==(1536,140) and obs['critic'].shape==(1536,162)
     torch.save(task.scene.state(),args.output/'initial.pt')
+    if fixture is not None:
+        actual = task.scene.state()
+        for key in ['joint_pos', 'joint_vel', 'table_pose', 'goal_pose']:
+            torch.testing.assert_close(actual[key], states[key], atol=1e-6, rtol=0)
+        torch.testing.assert_close(actual['object_pose'], states['object_state'][:, :7], atol=1e-6, rtol=0)
+        maximum = 0.
+        for _, group in task.scene.groups:
+            data = group.sim.wp_data
+            count = int(wp.to_torch(data.nacon)[0])
+            assert count <= data.naconmax
+            if count:
+                distances = wp.to_torch(data.contact.dist)[:count]
+                assert bool(torch.isfinite(distances).all())
+                maximum = max(maximum, float((-distances).clamp_min(0).max()))
+        report['fixed_reset_fixture']['native_initial_max_depth_m'] = maximum
+        report['fixed_reset_fixture']['native_state_readback_passed'] = True
+        assert maximum <= fixture['metadata']['threshold_m'], maximum
     actions=torch.zeros(1536,29,device=task.device)
     rollout=time.monotonic()
     for step in range(64):
@@ -107,6 +148,8 @@ def main():
     report['elapsed_seconds']=time.monotonic()-start
     report['physical_review_required']=report['max_depth_m']>.005 or report['max_joint_limit_violation_rad']>.01
     report['scope']='Full1200tool/1536env native teacher lifecycle and same-process task-state disk roundtrip. No learner/update/separate-process recovery or contact acceptance claim.'
+    if fixture is not None:
+        report['scope'] += ' Uses fixed vetted per-world resets, so this is a labeled repair diagnostic, not original-reset reproduction.'
     torch.save(task.scene.state(),args.output/'final.pt')
     (args.output/'result.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report),flush=True)
