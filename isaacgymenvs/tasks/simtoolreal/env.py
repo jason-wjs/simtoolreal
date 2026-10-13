@@ -106,6 +106,8 @@ class SimToolReal(VecTask):
     ):
         self.cfg = cfg
         self.conditioned_reset_bank = None
+        self._restore_dof_pending = False
+        self._restored_native_dof_state = None
 
         # Goal related variables
         self.goal_object_indices = []
@@ -1656,9 +1658,18 @@ class SimToolReal(VecTask):
         if native_dof_state is not None:
             native_dof_state = native_dof_state.to(self.device).contiguous()
             assert self.gym.set_dof_state_tensor(self.sim, gymtorch.unwrap_tensor(native_dof_state))
+            # Gym's next state setter can replace an earlier pending batch.
+            # Retain clean physical state until the first normal pre-step flush;
+            # the task's DOF staging buffer includes observation velocity noise.
+            self._restored_native_dof_state = native_dof_state
+            self._restore_dof_pending = True
             self.set_dof_state_object_indices = []
         else:
             self.set_dof_state_tensor_indexed()
+        self.deferred_set_actor_root_state_tensor_indexed([
+            self.object_indices, self.table_indices,
+            *self._extra_object_indices(torch.arange(self.num_envs, device=self.device)),
+        ])
         if checkpoint_rng is not None:
             random.setstate(checkpoint_rng['python'])
             np.random.set_state(checkpoint_rng['numpy'])
@@ -3593,6 +3604,12 @@ class SimToolReal(VecTask):
         self.set_dof_state_object_indices.extend(dof_indices)
 
     def set_dof_state_tensor_indexed(self) -> None:
+        if self._restore_dof_pending:
+            assert self.gym.set_dof_state_tensor(
+                self.sim, gymtorch.unwrap_tensor(self._restored_native_dof_state))
+            self._restore_dof_pending = False
+            self.set_dof_state_object_indices = []
+            return
         dof_indices: List[Tensor] = self.set_dof_state_object_indices
         if not dof_indices:
             # nothing to set
@@ -3784,6 +3801,13 @@ class SimToolReal(VecTask):
                 ].clone()
 
                 self.initial_state_idx += len(env_ids)
+
+        if tensor_reset and self._restore_dof_pending:
+            # A genuine episode reset before the first restored simulation step
+            # supersedes that world's saved DOFs, but not the other worlds.
+            self._restored_native_dof_state.view(self.num_envs, -1, 2)[env_ids] = (
+                self.dof_state.view(self.num_envs, -1, 2)[env_ids]
+            )
 
         self.gym.set_dof_position_target_tensor_indexed(
             self.sim,

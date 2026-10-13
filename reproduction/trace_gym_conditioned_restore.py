@@ -31,6 +31,11 @@ class Trace:
             row['worst_object_input'] = values[self.object_index].cpu().tolist()
         else:
             row['worst_dof_input'] = values.view(24576, 29, 2)[22808].cpu().tolist()
+        if self.steps == 0:
+            payload = 'restore_write_' + str(len(self.events)) + '.pt'
+            torch.save(dict(values=values.cpu().clone(),
+                indices=ids if indices is not None else None), self.output / payload)
+            row['payload'] = payload
         self.events.append(row)
         if indices is None:
             return getattr(self.native, method)(sim, states)
