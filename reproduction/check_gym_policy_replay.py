@@ -121,6 +121,9 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--config-path', type=Path, default=Path('pretrained_policy/config.yaml'))
     parser.add_argument('--checkpoint-path', type=Path, default=Path('pretrained_policy/model.pth'))
+    parser.add_argument('--object-category', default='screwdriver')
+    parser.add_argument('--object-name', default='short_screwdriver')
+    parser.add_argument('--task-name', default='spin_horizontal')
     parser.add_argument('--match-released-velocity-noise', action='store_true',
                         help='Diagnostic: set task joint-velocity observation noise to released value0.01')
     parser.add_argument('--disable-thumb-index-contact', action='store_true')
@@ -173,6 +176,7 @@ def main():
                 contact_offset=params.physx.contact_offset, rest_offset=params.physx.rest_offset)
             assert params.physx.num_position_iterations == config['sim']['physx']['num_position_iterations']
             metadata = dict(mode=args.mode, properties=properties, config=config,
+                evaluation_case=dict(category=args.object_category,object=args.object_name,task=args.task_name),
                 runtime_solver=runtime_solver,
                 initial=initial, dt=env.sim_params.dt, substeps=env.sim_params.substeps,
                 script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -182,7 +186,7 @@ def main():
                 config_path=str(self.config_path.resolve()), checkpoint_path=str(self.checkpoint_path.resolve()),
                 source_sha256=hashlib.sha256(args.source.read_bytes()).hexdigest() if args.source else None,
                 external_wrenches='Zero; official evaluation disables all force and velocity impulse scales.',
-                scope='Specified checkpoint on short_screwdriver/spin_horizontal, up to600policy steps plus2warmups. Seed42, no GUI/video/pacing. Fresh-process command replay, not benchmark success or physical acceptance.')
+                scope='Specified checkpoint and evaluation_case, up to600policy steps plus2warmups. Seed42, no GUI/video/pacing. Not full benchmark success or physical acceptance.')
             if source:
                 assert properties == source['properties']
                 assert metadata['config_sha256'] == source['config_sha256']
@@ -311,8 +315,8 @@ def main():
 
     evaluator.create_env = create_scene
     evaluator.EvalRunner = Runner
-    evaluator.tyro.cli = lambda _: evaluator.EvalArgs(object_category='screwdriver', object_name='short_screwdriver',
-        task_name='spin_horizontal', config_path=args.config_path,
+    evaluator.tyro.cli = lambda _: evaluator.EvalArgs(object_category=args.object_category, object_name=args.object_name,
+        task_name=args.task_name, config_path=args.config_path,
         checkpoint_path=args.checkpoint_path)
     evaluator.main()
 

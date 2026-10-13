@@ -31,6 +31,9 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--config-path', type=Path, default=Path('pretrained_policy/config.yaml'))
+    parser.add_argument('--object-category', default='screwdriver')
+    parser.add_argument('--object-name', default='short_screwdriver')
+    parser.add_argument('--task-name', default='spin_horizontal')
     parser.add_argument('--repeatability', action='store_true', help='Repeat observed deepest hand/object and table/object poses at half timestep, clearing object contacts between each')
     args = parser.parse_args()
     source = json.loads(args.source.read_text())
@@ -38,6 +41,7 @@ def main():
     # Pose queries must preserve the replay's collision geometry/filtering.
     # This probe reconstructs the native scene, so reject contact-disabled replays.
     assert 'contact_intervention' not in source
+    assert source['config']['env']['objectName']==args.object_name
     assert hashlib.sha256(args.config_path.read_bytes()).hexdigest()==source['config_sha256']
     if args.repeatability:
         assert source['steps']==602
@@ -112,8 +116,8 @@ def main():
 
     evaluator.create_env=create_scene
     evaluator.EvalRunner=Runner
-    evaluator.tyro.cli=lambda _: evaluator.EvalArgs(object_category='screwdriver', object_name='short_screwdriver',
-        task_name='spin_horizontal', config_path=args.config_path, checkpoint_path=Path('pretrained_policy/model.pth'))
+    evaluator.tyro.cli=lambda _: evaluator.EvalArgs(object_category=args.object_category, object_name=args.object_name,
+        task_name=args.task_name, config_path=args.config_path, checkpoint_path=Path('pretrained_policy/model.pth'))
     evaluator.main()
     print('SAVED_POSE_CONTACTS_COMPLETE',len(report['cases']),flush=True)
 
