@@ -37,7 +37,7 @@ def goal_spec():
 
 
 def topology(path):
-    return tuple(list(c.find('geometry'))[0].tag
+    return tuple('capsule' if c.find('geometry/cylinder') is not None else list(c.find('geometry'))[0].tag
                  for c in ET.parse(path).getroot().findall('link/collision'))
 
 

@@ -1,4 +1,4 @@
-"""Import the original procedural tools, preserving explicit URDF inertias."""
+"""Import native Lab tool collisions and explicit URDF inertias."""
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -44,7 +44,9 @@ def object_spec(path: Path, friction: float = 0.5):
             kind = mujoco.mjtGeom.mjGEOM_BOX
             size = np.fromstring(primitive.get('size'), sep=' ') / 2
         elif primitive.tag == 'cylinder':
-            kind = mujoco.mjtGeom.mjGEOM_CYLINDER
+            # Lab's URDF converter replaces collision cylinders by capsules.
+            # USD height is the cylindrical spine, excluding hemispheres.
+            kind = mujoco.mjtGeom.mjGEOM_CAPSULE
             size = [float(primitive.get('radius')), float(primitive.get('length')) / 2, 0]
         else:
             raise ValueError(f'Unexpected original tool primitive: {primitive.tag}')
@@ -54,7 +56,7 @@ def object_spec(path: Path, friction: float = 0.5):
 
 
 def audit_object(path: Path):
-    """Compare compiled mass, COM, inertia and collision geometry to source URDF."""
+    """Check source inertias and Lab's cylinder-to-capsule collision import."""
     link = ET.parse(path).getroot().find('link')
     inertial = link.find('inertial')
     model = object_spec(path).compile()
@@ -82,7 +84,8 @@ def audit_object(path: Path):
             assert model.geom_type[index] == mujoco.mjtGeom.mjGEOM_BOX
             np.testing.assert_allclose(model.geom_size[index], np.fromstring(primitive.get('size'), sep=' ')/2)
         else:
-            assert model.geom_type[index] == mujoco.mjtGeom.mjGEOM_CYLINDER
+            assert model.geom_type[index] == mujoco.mjtGeom.mjGEOM_CAPSULE
             np.testing.assert_allclose(model.geom_size[index, :2], [float(primitive.get('radius')), float(primitive.get('length'))/2])
     return {'mass': float(body.mass[0]), 'collision_count': len(collisions),
+            'collision_cylinders_replaced_by_capsules': sum(c.find('geometry/cylinder') is not None for c in collisions),
             'max_inertia_error': float(np.abs(compiled-source).max()), 'passed': True}
