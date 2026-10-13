@@ -1,4 +1,4 @@
-"""CPU PhysX calibration of contact feature points against known box/plane gaps."""
+"""CPU-pipeline PhysX contact calibration against known box/plane gaps."""
 import argparse
 import hashlib
 import json
@@ -23,6 +23,7 @@ def box_gap(states, box_body, support_top):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--gpu-physx', action='store_true')
     args = parser.parse_args()
     gym = gymapi.acquire_gym()
     params = gymapi.SimParams()
@@ -31,7 +32,7 @@ def main():
     params.up_axis = gymapi.UP_AXIS_Z
     params.gravity = gymapi.Vec3(0, 0, 0)
     params.use_gpu_pipeline = False
-    params.physx.use_gpu = False
+    params.physx.use_gpu = args.gpu_physx
     params.physx.num_threads = 2
     params.physx.contact_collection = gymapi.ContactCollection.CC_LAST_SUBSTEP
     sim = gym.create_sim(0, -1, gymapi.SIM_PHYSX, params)
@@ -111,9 +112,10 @@ def main():
             assert c['calibration_error_m'] < 1e-6, c
         result.append(c)
     payload = dict(script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                   calibration_passed=True, mode='cpu_pipeline_cpu_physx', steps=1, gravity=[0, 0, 0], dt=params.dt,
+                   calibration_passed=True, mode='cpu_pipeline_gpu_physx' if args.gpu_physx else 'cpu_pipeline_cpu_physx',
+                   steps=1, gravity=[0, 0, 0], dt=params.dt,
                    box_size=[.1, .1, .1], cases=result,
-                   scope='Known geometric CPU box/plane and box/box fixtures only. '
+                   scope='Known geometric box/plane and box/box fixtures with CPU tensor pipeline only. '
                          'Negative initialOverlap agrees with pre-step penetration for these cases. '
                          'Not a post-step distance, GPU-pipeline measurement or policy physical-quality acceptance.')
     args.output.parent.mkdir(parents=True, exist_ok=True)
