@@ -135,6 +135,10 @@ class SimToolRealScene:
         group = self.groups[0][1]
         self.default_joint_pos = group.robot.data.default_joint_pos[0, group.joint_ids].clone()
         self.joint_limits = group.robot.data.joint_pos_limits[0, group.joint_ids].clone()
+        self.object_mass = torch.empty(num_envs, device=device)
+        for ids, group in self.groups:
+            bid = group.sim.mj_model.body('object/object_root').id
+            self.object_mass[ids] = group.sim.model.body_mass[:, bid]
 
     def reset(self, env_ids, joint_pos, joint_vel, object_state, table_pose, goal_pose):
         # Inputs are indexed by the supplied global env ids, not topology order.

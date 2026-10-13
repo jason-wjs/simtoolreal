@@ -100,10 +100,17 @@ COM velocity, matching this scene's fields. mjlab external wrench writes use
 the world frame, matching native `is_global=True`. Live numerical verification
 is still required; these are interface-source checks.
 
+`task.py` connects the components using the installed DirectRLEnv order:
+pre-physics actions/wrench, decimated physics, counters, dones and goal resampling,
+rewards, full episode resets, then observations. It uses the exact configured
+ceiling for episode length. This integration is implemented but not yet run on a
+GPU. `check_mjlab_task.py` bounds the first full-pool lifecycle check to64steps,
+records substep depth/limit violations and stops on persistent deep contact or
+large joint violations. A completed diagnostic does not imply physical acceptance.
+
 ## Remaining
 
-Full step/reset lifecycle integration and
-SAPG environment adapter remain to implement. Full native contact acceptance,
+Live task rollout validation and the SAPG environment adapter remain to implement. Full native contact acceptance,
 training/save/restore and evaluation remain to verify.
 No working training environment, physical contact acceptance or reproduction
 result is claimed by the tool-asset check.
