@@ -17,6 +17,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     import torch
     import warp as wp
+    import mujoco
     from mjlabenvs.scene import SimToolRealScene, PHYSICS_DT, DECIMATION
 
     torch.manual_seed(42)
@@ -27,10 +28,13 @@ def main():
               'physics_dt': PHYSICS_DT, 'decimation': DECIMATION,
               'setup_seconds': time.monotonic()-start, 'steps': 240,
               'contact_samples': 0, 'max_penetration_m': 0.,
-              'max_joint_limit_violation_rad': 0., 'all_finite': True}
-    for _, group in scene.groups:
-        def step_and_audit(original=group.sim.step, group=group):
+              'max_joint_limit_violation_rad': 0., 'all_finite': True,
+              'deep_contact_pairs': {}}
+    for global_ids, group in scene.groups:
+        group.audit_step = 0
+        def step_and_audit(original=group.sim.step, group=group, global_ids=global_ids):
             original()
+            group.audit_step += 1
             data = group.sim.wp_data
             count = int(wp.to_torch(data.nacon)[0])
             assert count <= data.naconmax, 'Native contact capacity exceeded'
@@ -40,6 +44,26 @@ def main():
                 report['contact_samples'] += count
                 report['max_penetration_m'] = max(report['max_penetration_m'],
                                                  float((-distances).clamp_min(0).max()))
+                deep = distances < -.005
+                if bool(deep.any()):
+                    pairs = wp.to_torch(data.contact.geom)[:count][deep].long()
+                    worlds = wp.to_torch(data.contact.worldid)[:count][deep].long()
+                    depths = -distances[deep]
+                    for pair in pairs.unique(dim=0):
+                        selected = (pairs == pair).all(dim=-1)
+                        indices = selected.nonzero(as_tuple=True)[0]
+                        worst = indices[depths[selected].argmax()]
+                        geom_ids = pair.tolist()
+                        names = [mujoco.mj_id2name(group.sim.mj_model, mujoco.mjtObj.mjOBJ_GEOM, i)
+                                 or f'geom_{i}' for i in geom_ids]
+                        key = ' <-> '.join(sorted(names))
+                        entry = report['deep_contact_pairs'].setdefault(key, {'samples': 0, 'max_depth_m': 0.})
+                        entry['samples'] += int(selected.sum())
+                        depth = float(depths[worst])
+                        if depth > entry['max_depth_m']:
+                            env_id = int(global_ids[worlds[worst]])
+                            entry.update(max_depth_m=depth, physics_step=group.audit_step,
+                                         global_env=env_id, tool_index=int(scene.assignment[env_id]))
         group.sim.step = step_and_audit
     n = scene.num_envs
     ids = torch.arange(n, device=scene.device)
