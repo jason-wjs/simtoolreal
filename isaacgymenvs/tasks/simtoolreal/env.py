@@ -1524,7 +1524,14 @@ class SimToolReal(VecTask):
         Return serializable environment state to be saved to checkpoint.
         Can be used for stateful training sessions, i.e. with adaptive curriculums.
         """
+        # Observation noise modifies the DOF staging tensor in-place. Preserve
+        # that task buffer separately from the actual simulator velocity.
+        task_dof_state = self.dof_state.clone()
+        self.gym.refresh_dof_state_tensor(self.sim)
+        native_dof_state = self.dof_state.clone()
+        self.dof_state.copy_(task_dof_state)
         return dict(
+            native_dof_state=native_dof_state,
             success_tolerance=self.success_tolerance,
             prev_episode_successes=self.prev_episode_successes,
             prev_episode_true_objective=self.prev_episode_true_objective,
@@ -1584,6 +1591,7 @@ class SimToolReal(VecTask):
 
         env_state = dict(env_state)
         checkpoint_rng = env_state.pop("checkpoint_rng", None)
+        native_dof_state = env_state.pop("native_dof_state", None)
 
         rewards_episode = env_state.get("rewards_episode", None)
         if rewards_episode is not None:
@@ -1628,7 +1636,12 @@ class SimToolReal(VecTask):
             tensor_reset=False,
         )
         self.set_actor_root_state_tensor_indexed()
-        self.set_dof_state_tensor_indexed()
+        if native_dof_state is not None:
+            native_dof_state = native_dof_state.to(self.device).contiguous()
+            assert self.gym.set_dof_state_tensor(self.sim, gymtorch.unwrap_tensor(native_dof_state))
+            self.set_dof_state_object_indices = []
+        else:
+            self.set_dof_state_tensor_indexed()
         if checkpoint_rng is not None:
             random.setstate(checkpoint_rng['python'])
             np.random.set_state(checkpoint_rng['numpy'])

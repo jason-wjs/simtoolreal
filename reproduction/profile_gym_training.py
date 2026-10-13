@@ -131,7 +131,7 @@ def train_epoch(self):
 
 def restore(self, weights, set_epoch=True):
     missing = {'obs_queue', 'action_queue', 'object_state_queue', 'checkpoint_rng',
-               'object_scale_noise_multiplier', '_tyler_curriculum_scale'} - weights['env_state'].keys()
+               'object_scale_noise_multiplier', '_tyler_curriculum_scale', 'native_dof_state'} - weights['env_state'].keys()
     if missing:
         raise ValueError(f'Checkpoint lacks delay history required for training continuation: {sorted(missing)}')
     # The native task mutates its input dictionary, so retain the saved state
@@ -150,10 +150,14 @@ def restore(self, weights, set_epoch=True):
               'native_readback': {},
               'scope': 'Original camera-free teacher recipe with generic physical DR disabled; static properties of every native actor, saved task/RNG/learner state and refreshed root/DOF tensors. No hidden physics cache or bitwise future-trajectory claim.'}
     env = self.vec_env.env
+    task_dof_state = env.dof_state.clone()
     env.gym.refresh_dof_state_tensor(env.sim)
     env.gym.refresh_actor_root_state_tensor(env.sim)
     for key in ['dof_state', 'root_state_tensor']:
-        report['native_readback'][key] = float((getattr(env, key).cpu() - expected['env_state'][key].cpu()).abs().max())
+        saved_key = 'native_dof_state' if key == 'dof_state' else key
+        report['native_readback'][key] = float((getattr(env, key).cpu() - expected['env_state'][saved_key].cpu()).abs().max())
+    env.dof_state.copy_(task_dof_state)
+    report['saved_native_vs_observation_dof_max'] = float((expected['env_state']['native_dof_state'] - expected['env_state']['dof_state']).abs().max())
     (Path(self.config['train_dir']) / 'resume_probe.json').write_text(json.dumps(report, indent=2) + '\n')
     self._restore_probe_steps = 0
     self._first_restored_task = expected['env_state']
