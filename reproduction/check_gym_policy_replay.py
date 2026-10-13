@@ -128,6 +128,10 @@ def main():
                 assert env.gym.set_actor_root_state_tensor(env.sim, gymtorch.unwrap_tensor(root))
                 assert env.gym.set_dof_state_tensor(env.sim, gymtorch.unwrap_tensor(dof))
                 actual = snapshot(env)
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.with_suffix('.initial.json').write_text(json.dumps(dict(
+                    requested=source['initial'], actual=actual, source_sha256=metadata['source_sha256'],
+                    script_sha256=metadata['script_sha256'])) + '\n')
                 assert torch.max(torch.abs(torch.tensor(actual['root']) - root.cpu())) < 1e-7
                 assert actual['dof'] == source['initial']['dof']
                 metadata['initial'] = actual
