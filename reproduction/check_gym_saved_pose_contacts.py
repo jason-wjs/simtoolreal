@@ -30,10 +30,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--config-path', type=Path, default=Path('pretrained_policy/config.yaml'))
     parser.add_argument('--repeatability', action='store_true', help='Repeat observed deepest hand/object and table/object poses at half timestep, clearing object contacts between each')
     args = parser.parse_args()
     source = json.loads(args.source.read_text())
-    assert source['mode']=='capture' and source['steps']==602
+    assert source['mode']=='capture' and 0<source['steps']==len(source['trace'])<=602
+    assert hashlib.sha256(args.config_path.read_bytes()).hexdigest()==source['config_sha256']
+    if args.repeatability:
+        assert source['steps']==602
     random.seed(42); np.random.seed(42); torch.manual_seed(42); torch.cuda.manual_seed_all(42)
     report = dict(status='running', source_sha256=hashlib.sha256(args.source.read_bytes()).hexdigest(),
         script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), cases=[],
@@ -106,7 +110,7 @@ def main():
     evaluator.create_env=create_scene
     evaluator.EvalRunner=Runner
     evaluator.tyro.cli=lambda _: evaluator.EvalArgs(object_category='screwdriver', object_name='short_screwdriver',
-        task_name='spin_horizontal', config_path=Path('pretrained_policy/config.yaml'), checkpoint_path=Path('pretrained_policy/model.pth'))
+        task_name='spin_horizontal', config_path=args.config_path, checkpoint_path=Path('pretrained_policy/model.pth'))
     evaluator.main()
     print('SAVED_POSE_CONTACTS_COMPLETE',len(report['cases']),flush=True)
 

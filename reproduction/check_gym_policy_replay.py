@@ -85,6 +85,8 @@ def main():
     parser.add_argument('--mode', choices=['capture', 'gpu_replay', 'cpu_replay'], required=True)
     parser.add_argument('--source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--config-path', type=Path, default=Path('pretrained_policy/config.yaml'))
+    parser.add_argument('--checkpoint-path', type=Path, default=Path('pretrained_policy/model.pth'))
     args = parser.parse_args()
     assert (args.source is None) == (args.mode == 'capture')
     random.seed(42); np.random.seed(42); torch.manual_seed(42); torch.cuda.manual_seed_all(42)
@@ -116,9 +118,10 @@ def main():
                 scene_helper_sha256=hashlib.sha256(Path(__file__).with_name('check_gym_pipeline_replay.py').read_bytes()).hexdigest(),
                 config_sha256=hashlib.sha256(self.config_path.read_bytes()).hexdigest(),
                 checkpoint_sha256=hashlib.sha256(self.checkpoint_path.read_bytes()).hexdigest(),
+                config_path=str(self.config_path.resolve()), checkpoint_path=str(self.checkpoint_path.resolve()),
                 source_sha256=hashlib.sha256(args.source.read_bytes()).hexdigest() if args.source else None,
                 external_wrenches='Zero; official evaluation disables all force and velocity impulse scales.',
-                scope='Released policy on short_screwdriver/spin_horizontal, up to600policy steps plus2warmups. Seed42, no GUI/video/pacing. Fresh-process command replay, not benchmark success or physical acceptance.')
+                scope='Specified checkpoint on short_screwdriver/spin_horizontal, up to600policy steps plus2warmups. Seed42, no GUI/video/pacing. Fresh-process command replay, not benchmark success or physical acceptance.')
             if source:
                 assert properties == source['properties']
                 assert metadata['config_sha256'] == source['config_sha256']
@@ -205,8 +208,8 @@ def main():
     evaluator.create_env = create_scene
     evaluator.EvalRunner = Runner
     evaluator.tyro.cli = lambda _: evaluator.EvalArgs(object_category='screwdriver', object_name='short_screwdriver',
-        task_name='spin_horizontal', config_path=Path('pretrained_policy/config.yaml'),
-        checkpoint_path=Path('pretrained_policy/model.pth'))
+        task_name='spin_horizontal', config_path=args.config_path,
+        checkpoint_path=args.checkpoint_path)
     evaluator.main()
 
 
