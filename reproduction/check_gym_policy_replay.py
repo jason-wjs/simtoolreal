@@ -47,7 +47,9 @@ class CommandRecorder:
     def record(self, name, sim, value, indices=None, count=None):
         command = dict(name=name, value=array(gymtorch.wrap_tensor(value)))
         if indices is not None:
-            command['indices'] = array(gymtorch.wrap_tensor(indices))
+            # Native reset code also submits count0 no-ops; Gym cannot wrap an
+            # empty descriptor back into torch. Preserve the original call.
+            command['indices'] = array(gymtorch.wrap_tensor(indices)) if count else []
             command['count'] = count
         self.pending.append(command)
         if indices is None:
