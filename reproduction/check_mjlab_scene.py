@@ -34,6 +34,8 @@ def main():
               'deep_contact_pairs': {}}
     for global_ids, group in scene.groups:
         group.audit_step = 0
+        group.contact_peak = torch.zeros(len(global_ids), device=scene.device)
+        group.contact_tail = torch.zeros_like(group.contact_peak)
         def step_and_audit(original=group.sim.step, group=group, global_ids=global_ids):
             original()
             group.audit_step += 1
@@ -42,11 +44,15 @@ def main():
             assert count <= data.naconmax, 'Native contact capacity exceeded'
             if count:
                 distances = wp.to_torch(data.contact.dist)[:count]
+                contact_worlds = wp.to_torch(data.contact.worldid)[:count].long()
+                depths_all = (-distances).clamp_min(0)
+                group.contact_peak.scatter_reduce_(0, contact_worlds, depths_all, reduce='amax', include_self=True)
                 assert bool(torch.isfinite(distances).all())
                 report['contact_samples'] += count
                 report['max_penetration_m'] = max(report['max_penetration_m'],
                                                  float((-distances).clamp_min(0).max()))
                 if group.audit_step > 420:
+                    group.contact_tail.scatter_reduce_(0, contact_worlds, depths_all, reduce='amax', include_self=True)
                     report['last_half_second_max_penetration_m'] = max(
                         report['last_half_second_max_penetration_m'], float((-distances).clamp_min(0).max()))
                 deep = distances < -.005
@@ -101,6 +107,18 @@ def main():
     torch.cuda.synchronize()
     report['rollout_seconds'] = time.monotonic()-rollout
     report['elapsed_seconds'] = time.monotonic()-start
+    per_world_peak = torch.zeros(n, device=scene.device)
+    per_world_tail = torch.zeros_like(per_world_peak)
+    for ids, group in scene.groups:
+        per_world_peak[ids] = group.contact_peak
+        per_world_tail[ids] = group.contact_tail
+    report['worlds_with_tail_depth_above_5mm'] = int((per_world_tail > .005).sum())
+    report['worst_tail_worlds'] = [{'global_env': int(i), 'tool_index': int(scene.assignment[i]),
+        'peak_depth_m': float(per_world_peak[i]), 'tail_depth_m': float(per_world_tail[i]),
+        'final_object_pose': state['object_pose'][i].tolist(),
+        'final_object_velocity': state['object_velocity'][i].tolist()}
+        for i in per_world_tail.topk(12).indices]
+    torch.save({'peak': per_world_peak, 'tail': per_world_tail}, args.output / 'contact_by_world.pt')
     report['physical_review_required'] = report['max_penetration_m'] > .005 or report['max_joint_limit_violation_rad'] > .01
     report['scope'] = 'All1200 original tool assets and1536 worlds in3topology groups. Native primitive geometry, robot PD hold, randomized table z, diagnostic freefall from0.9m. Native contact depths sampled every physics step. No task reward, learning, or accepted physical reproduction claim.'
     torch.save(state, args.output / 'final.pt')
