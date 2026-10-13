@@ -16,6 +16,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--checkpoint', type=Path, action='append', default=[])
     args = parser.parse_args()
     source = args.source.resolve()
     trace = json.loads((source / 'native/initial_training_trace.json').read_text())
@@ -90,27 +91,44 @@ def main():
                 actual_body_poses=actual, expected_body_poses=expected))
             assert all(e['position_m'] <= 1e-5 and e['rotation_rad'] <= 1e-4 for e in errors), errors
             env.gym.simulate(env.sim); env.gym.fetch_results(env.sim, True)
-        state = load('native', 'pre_integrate')
-        roots, dofs, targets = install(state)
-        env.gym.simulate(env.sim); env.gym.fetch_results(env.sim, True)
-        rows = []
-        for i, instance in enumerate(env.envs):
-            contacts = [{k: int(c[k]) if k in ('body0', 'body1') else float(c[k])
-                         for k in ('body0', 'body1', 'initialOverlap', 'minDist')}
-                        for c in env.gym.get_env_rigid_contacts(instance)]
-            assert all(-1 <= c[k] < 33 for c in contacts for k in ('body0', 'body1'))
-            rows.append(dict(world=i, asset_index=i % 1200, contacts=contacts))
-        report['per_world'] = rows
-        clear = roots.clone()
-        clear[state['object_indices'].long(), 2] += 3.
-        assert env.gym.set_actor_root_state_tensor(env.sim, gymtorch.unwrap_tensor(clear))
-        assert env.gym.set_dof_state_tensor(env.sim, gymtorch.unwrap_tensor(dofs))
-        assert env.gym.set_dof_position_target_tensor(env.sim, gymtorch.unwrap_tensor(targets))
-        env.gym.simulate(env.sim); env.gym.fetch_results(env.sim, True)
-        counts = [sum(30 in (int(c['body0']), int(c['body1']))
-                      for c in env.gym.get_env_rigid_contacts(instance)) for instance in env.envs]
-        report['clear_object_control_counts'] = counts
-        assert not any(counts)
+        initial = load('native', 'pre_integrate')
+        if args.checkpoint:
+            report['scope'] = 'Sparse saved training checkpoint poses, not a continuous contact audit. Same original24576-world grid/assets/properties, native GPU PhysX/CPU tensors, original two-world body calibration and per-coordinate root-readback bounds.'
+            report['snapshots'] = []
+        for checkpoint in args.checkpoint or [None]:
+            row_report = report
+            state = initial
+            if checkpoint is not None:
+                weights = torch.load(checkpoint, map_location='cpu')[0]
+                assert weights['reproduction_static_scene_digest'] == trace['native_scene_digest']
+                saved = weights['env_state']
+                assert saved['conditioned_reset_bank_sha256'] == 'd4836f6812720acc03ae590625af24e98c617e347fef619ade7a59eb4db4568a'
+                state = dict(native_root=saved['root_state_tensor'], native_dof=saved['native_dof_state'],
+                    object_indices=initial['object_indices'])
+                row_report = dict(checkpoint=str(checkpoint), epoch=weights['epoch'], frame=weights['frame'],
+                    checkpoint_sha256=hashlib.sha256(checkpoint.read_bytes()).hexdigest())
+                report['snapshots'].append(row_report)
+            roots, dofs, targets = install(state)
+            row_report['readback_index'] = len(report['readbacks']) - 1
+            env.gym.simulate(env.sim); env.gym.fetch_results(env.sim, True)
+            rows = []
+            for i, instance in enumerate(env.envs):
+                contacts = [{k: int(c[k]) if k in ('body0', 'body1') else float(c[k])
+                             for k in ('body0', 'body1', 'initialOverlap', 'minDist')}
+                            for c in env.gym.get_env_rigid_contacts(instance)]
+                assert all(-1 <= c[k] < 33 for c in contacts for k in ('body0', 'body1'))
+                rows.append(dict(world=i, asset_index=i % 1200, contacts=contacts))
+            row_report['per_world'] = rows
+            clear = roots.clone()
+            clear[state['object_indices'].long(), 2] += 3.
+            assert env.gym.set_actor_root_state_tensor(env.sim, gymtorch.unwrap_tensor(clear))
+            assert env.gym.set_dof_state_tensor(env.sim, gymtorch.unwrap_tensor(dofs))
+            assert env.gym.set_dof_position_target_tensor(env.sim, gymtorch.unwrap_tensor(targets))
+            env.gym.simulate(env.sim); env.gym.fetch_results(env.sim, True)
+            counts = [sum(30 in (int(c['body0']), int(c['body1']))
+                          for c in env.gym.get_env_rigid_contacts(instance)) for instance in env.envs]
+            row_report['clear_object_control_counts'] = counts
+            assert not any(counts)
         report['status'] = 'completed'
     except BaseException as error:
         report.update(status='stopped', error=repr(error))
