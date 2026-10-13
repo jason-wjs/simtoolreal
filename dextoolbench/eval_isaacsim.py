@@ -66,6 +66,10 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Record native contacts and states at every physics substep; requires output_dir.")
     parser.add_argument("--audit_state", action="store_true",
                         help="Save native parameters and first policy input/action; requires output_dir.")
+    parser.add_argument("--replay_action_archive", type=Path,
+                        help="Diagnostic: replay actions from an audited physics_trajectory.npz.")
+    parser.add_argument("--physics_decimation", type=int, choices=(2, 4),
+                        help="Replay diagnostic only: physics steps per unchanged policy interval.")
     return parser
 
 
@@ -96,6 +100,11 @@ def main() -> None:
     args = _args
     if args.audit_state and args.output_dir is None:
         raise ValueError("audit_state requires output_dir")
+    if args.physics_decimation is not None and args.replay_action_archive is None:
+        raise ValueError("physics_decimation is restricted to recorded-action diagnostics")
+    if args.replay_action_archive is not None:
+        if not args.audit_physics or args.output_dir is None or args.num_episodes != 1 or args.audit_state:
+            raise ValueError("Recorded-action replay requires one episode, audit_physics/output_dir, and no audit_state")
 
     import gymnasium as gym
     import numpy as np
@@ -129,6 +138,11 @@ def main() -> None:
     # --- Env config (mirrors dextoolbench/eval_isaacgym.py overrides) ---
     cfg = SimToolRealEnvCfg()
     cfg.scene.num_envs = 1
+    if args.physics_decimation is not None:
+        policy_dt = cfg.sim.dt * cfg.decimation
+        cfg.decimation = args.physics_decimation
+        cfg.sim.dt = policy_dt / cfg.decimation
+        cfg.sim.render_interval = cfg.decimation
 
     cfg.assets.object_urdf = str(obj.decomposed_urdf_path)
     cfg.assets.object_scale = tuple(obj.scale)
@@ -176,20 +190,27 @@ def main() -> None:
     inner._replay_target_lab_order = None
 
     n_act = cfg.action_space
-    player = RlPlayer(
-        num_observations=inner.cfg.observation_space,
-        num_actions=n_act,
-        config_path=args.config_path,
-        checkpoint_path=args.checkpoint_path,
-        device=args.rl_device,
-        num_envs=1,
-    )
+    replay = None
+    if args.replay_action_archive is None:
+        player = RlPlayer(
+            num_observations=inner.cfg.observation_space,
+            num_actions=n_act,
+            config_path=args.config_path,
+            checkpoint_path=args.checkpoint_path,
+            device=args.rl_device,
+            num_envs=1,
+        )
+    else:
+        from simtoolreal_shared.recorded_actions import load_recorded_actions
+        replay = load_recorded_actions(args.replay_action_archive, n_act)
+        replay_actions = torch.as_tensor(replay['actions'], device=inner.device)
 
     episode_goal_pcts: list[float] = []
     episode_lengths: list[int] = []
 
     for ep in range(args.num_episodes):
-        player.player.init_rnn()
+        if replay is None:
+            player.player.init_rnn()
         obs, _ = env.reset()
         # Match gym driver's reset timing: one physics tick before the first
         # policy action (gym's first step doubles as the reset trigger).
@@ -202,8 +223,11 @@ def main() -> None:
         # far longer than episode_length_s; a fixed max-step cap here would guillotine
         # slow multi-goal tasks (e.g. flip_over) after the first goal's budget.
         while not done:
+            if replay is not None and step + 1 == len(replay_actions):
+                break
             policy_obs = obs["policy"].to(args.rl_device)
-            action = player.get_normalized_action(policy_obs, deterministic_actions=True)
+            action = (player.get_normalized_action(policy_obs, deterministic_actions=True)
+                      if replay is None else replay_actions[step + 1].unsqueeze(0))
             if args.audit_state and ep == 0 and step == 0:
                 from simtoolreal_shared.native_state_audit import lab_snapshot, write_snapshot
                 write_snapshot(args.output_dir, lab_snapshot(inner, policy_obs, action))
@@ -245,6 +269,10 @@ def main() -> None:
         print(f"[eval] wrote {output_dir / 'eval.json'}")
         if args.audit_physics:
             inner.write_audit(output_dir)
+        if replay is not None:
+            from simtoolreal_shared.recorded_actions import write_replay_check
+            write_replay_check(args.replay_action_archive, output_dir, replay,
+                               inner.cfg.decimation, inner.step_dt, done)
 
     import os
     import sys
