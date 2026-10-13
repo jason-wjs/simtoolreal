@@ -131,11 +131,14 @@ def main():
                         help='Diagnostic native solver convergence; retain collisions and timestep')
     parser.add_argument('--impact-substeps', type=int, choices=[2, 4, 8],
                         help='Replay first16 recorded commands with this substep count; retain60Hz control')
+    parser.add_argument('--four-substeps', action='store_true',
+                        help='Closed-loop diagnostic: four physical substeps at unchanged control rate')
     parser.add_argument('--restart-after', type=int, choices=[77, 219],
                         help='Restore a saved contact-entry state, then replay its next32commands')
     parser.add_argument('--switch-iterations-after', type=int, choices=[219],
                         help='Diagnostic: preserve native history, request live solver change before next32commands')
     args = parser.parse_args()
+    assert not args.four_substeps or (args.mode=='capture' and args.impact_substeps is None)
     assert args.impact_substeps is None or (args.mode=='gpu_replay' and args.position_iterations is None
         and args.restart_after is None and args.switch_iterations_after is None and not args.disable_thumb_index_contact)
     assert (args.source is None) == (args.mode == 'capture')
@@ -157,6 +160,8 @@ def main():
             overrides['task.sim.physx.num_position_iterations'] = args.position_iterations
         if args.impact_substeps is not None:
             overrides['task.sim.substeps'] = args.impact_substeps
+        if args.four_substeps:
+            overrides['task.sim.substeps'] = 4
         overrides.update({'pipeline': 'cpu' if args.mode == 'cpu_replay' else 'gpu',
                           'task.sim.physx.contact_collection': 0 if args.mode == 'capture' else 1})
         return create_env_from_cfg(cfg, headless=headless, overrides=overrides)
