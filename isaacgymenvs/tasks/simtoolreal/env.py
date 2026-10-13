@@ -105,6 +105,7 @@ class SimToolReal(VecTask):
         force_render,
     ):
         self.cfg = cfg
+        self.conditioned_reset_bank = None
 
         # Goal related variables
         self.goal_object_indices = []
@@ -1347,6 +1348,15 @@ class SimToolReal(VecTask):
         self.goal_object_indices = to_torch(
             self.goal_object_indices, dtype=torch.long, device=self.device
         )
+        if self.cfg['env'].get('conditionedResetBank'):
+            from .conditioned_reset import ConditionedResetBank
+            assert not self.randomize and not self.should_load_initial_states
+            assert self.cfg['env'].get('goodResetBoundary', 0) == 0 and not self.VISUALIZE_PD_TARGET_AS_BLUE_ROBOT
+            self.conditioned_reset_bank = ConditionedResetBank(
+                self.cfg['env']['conditionedResetBank'], self.device, self.object_asset_files)
+            assert torch.equal(self.conditioned_reset_bank.lower, self.arm_hand_dof_lower_limits)
+            assert torch.equal(self.conditioned_reset_bank.upper, self.arm_hand_dof_upper_limits)
+            self.conditioned_reset_rows = torch.full((self.num_envs,), -1, dtype=torch.long, device=self.device)
 
     def _extra_reset_rules(self, resets):
         return resets
@@ -1530,7 +1540,7 @@ class SimToolReal(VecTask):
         self.gym.refresh_dof_state_tensor(self.sim)
         native_dof_state = self.dof_state.clone()
         self.dof_state.copy_(task_dof_state)
-        return dict(
+        state = dict(
             native_dof_state=native_dof_state,
             success_tolerance=self.success_tolerance,
             prev_episode_successes=self.prev_episode_successes,
@@ -1584,12 +1594,19 @@ class SimToolReal(VecTask):
             checkpoint_rng=dict(python=random.getstate(), numpy=np.random.get_state(),
                                 torch=torch.get_rng_state(), cuda=torch.cuda.get_rng_state_all()),
         )
+        if self.conditioned_reset_bank is not None:
+            state.update(conditioned_reset_bank_sha256=self.conditioned_reset_bank.sha256,
+                conditioned_reset_rows=self.conditioned_reset_rows, table_init_state=self.table_init_state)
+        return state
 
     def set_env_state(self, env_state):
         if env_state is None:
             return
 
         env_state = dict(env_state)
+        bank_hash = env_state.pop('conditioned_reset_bank_sha256', None)
+        expected_bank = self.conditioned_reset_bank.sha256 if self.conditioned_reset_bank is not None else None
+        assert bank_hash == expected_bank, 'Checkpoint reset-bank identity mismatch'
         checkpoint_rng = env_state.pop("checkpoint_rng", None)
         native_dof_state = env_state.pop("native_dof_state", None)
 
@@ -3521,6 +3538,16 @@ class SimToolReal(VecTask):
             self.object_scale_noise_multiplier[env_ids] = torch_rand_float(
                 noise_min, noise_max, (len(env_ids), 3), device=self.device
             )
+            if self.conditioned_reset_bank is not None:
+                bank = self.conditioned_reset_bank
+                rows = bank.sample(env_ids)
+                self.conditioned_reset_rows[env_ids] = rows
+                self.root_state_tensor[obj_indices] = bank.object[rows]
+                self.table_init_state[env_ids] = bank.table[rows]
+                self.root_state_tensor[table_indices] = bank.table[rows]
+                # Keep the native reward/goal height reference: table center
+                # plus the configured offset, before object-position noise.
+                self.object_init_state[env_ids, 2] = bank.table[rows, 2] + self.cfg['env']['tableObjectZOffset']
 
         if len(env_ids) > 0 and reset_buf_idxs is not None and tensor_reset:
             obj_indices = self.object_indices[env_ids]
@@ -3706,6 +3733,11 @@ class SimToolReal(VecTask):
             self.arm_hand_dof_vel[env_ids, :] = (
                 self.reset_dof_vel_noise * rand_vel_floats
             )
+            if self.conditioned_reset_bank is not None:
+                states = self.conditioned_reset_bank.dof[self.conditioned_reset_rows[env_ids]]
+                robot_pos = states[:, :, 0]
+                self.arm_hand_dof_pos[env_ids] = robot_pos
+                self.arm_hand_dof_vel[env_ids] = states[:, :, 1]
             self.prev_targets[env_ids, : self.num_hand_arm_dofs] = robot_pos
             self.cur_targets[env_ids, : self.num_hand_arm_dofs] = robot_pos
 
