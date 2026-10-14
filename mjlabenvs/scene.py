@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 import mujoco
 import numpy as np
 import torch
+import warp as wp
 from mjlab.entity import EntityCfg, VariantEntityCfg
 from mjlab.scene import Scene, SceneCfg
 from mjlab.sim import MujocoCfg, Simulation, SimulationCfg
@@ -24,6 +25,15 @@ DECIMATION = 2
 INTEGRATION_FIELDS = ('time', 'qpos', 'qvel', 'act', 'history', 'qacc_warmstart',
                       'ctrl', 'qfrc_applied', 'xfrc_applied', 'eq_active',
                       'mocap_pos', 'mocap_quat', 'userdata')
+
+
+def _group_physics(group):
+    # These runtime fields distinguish the contact/limit variants actually
+    # exercised by the reproduction probes; asset hashes do not capture them.
+    model = group.sim.wp_model
+    return dict(timestep=wp.to_torch(model.opt.timestep),
+                geom_solref=wp.to_torch(model.geom_solref),
+                jnt_solref=wp.to_torch(model.jnt_solref))
 
 
 def table_spec():
@@ -203,13 +213,29 @@ class SimToolRealScene:
         return result
 
     def get_state(self):
-        return dict(assets=self.asset_identity, groups=[dict(ids=ids.clone(),
+        return dict(assets=self.asset_identity,
+            physics=dict(physics_dt=PHYSICS_DT, decimation=DECIMATION),
+            groups=[dict(ids=ids.clone(),
+            physics={name: value.clone() for name, value in _group_physics(group).items()},
             integration={name: getattr(group.sim.data, name).clone() for name in INTEGRATION_FIELDS})
             for ids, group in self.groups])
 
-    def set_state(self, state, targets, forces, torques):
+    def validate_state(self, state):
+        """Reject a different physics recipe before mutating any task state."""
         assert state['assets'] == self.asset_identity
         assert len(state['groups']) == len(self.groups)
+        if 'physics' not in state:
+            raise ValueError('Checkpoint lacks runtime physics identity; use a newly captured checkpoint')
+        if state['physics'] != dict(physics_dt=PHYSICS_DT, decimation=DECIMATION):
+            raise ValueError('Checkpoint scene timestep/decimation mismatch')
+        for index, ((ids, group), saved) in enumerate(zip(self.groups, state['groups'])):
+            assert torch.equal(ids, saved['ids'].to(self.device))
+            for name, value in _group_physics(group).items():
+                if not torch.equal(value, saved['physics'][name].to(value.device)):
+                    raise ValueError(f'Checkpoint physics mismatch: group {index} {name}')
+
+    def set_state(self, state, targets, forces, torques):
+        self.validate_state(state)
         for (ids, group), saved in zip(self.groups, state['groups']):
             assert torch.equal(ids, saved['ids'].to(self.device))
             group.sim.reset()

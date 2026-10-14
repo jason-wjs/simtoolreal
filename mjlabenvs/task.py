@@ -89,6 +89,7 @@ class SimToolRealTask:
 
     def set_state(self, state):
         assert state['config'] == json.dumps(self.cfg,default=vars,sort_keys=True)
+        self.scene.validate_state(state['scene'])
         for name in ('control','progress','observations','wrench'):
             component=getattr(self,name)
             saved={key:value.to(self.device) if isinstance(value,torch.Tensor) else value

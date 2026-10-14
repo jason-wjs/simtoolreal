@@ -103,8 +103,10 @@ is still required; these are interface-source checks.
 `task.py` connects the components using the installed DirectRLEnv order:
 pre-physics actions/wrench, decimated physics, counters, dones and goal resampling,
 rewards, full episode resets, then observations. It uses the exact configured
-ceiling for episode length. This integration is implemented but not yet run on a
-GPU. `check_mjlab_task.py` bounds the first full-pool lifecycle check to64steps,
+ceiling for episode length. Original-reset and fixed-clear-reset GPU checks have run but failed physical
+gates. A labeled CPU variant with clear resets,480Hz physics and5ms contact/hand
+limit settings completes64 policy steps and44 real resets; residual physical
+errors remain under review. This does not establish GPU candidate acceptance. `check_mjlab_task.py` bounds the first full-pool lifecycle check to64steps,
 records substep depth/limit violations and stops on persistent deep contact or
 large joint violations. A completed diagnostic does not imply physical acceptance.
 
@@ -116,12 +118,24 @@ The original vendored Runner imports successfully in the existing mjlab venv
 with `reproduction/mjlab-learner-requirements.txt`; PyTorch2.7.0, NumPy1.26.0,
 MuJoCo3.12.0, mujoco-warp3.14.0 and mjlab1.6.0+gyrofix remain unchanged.
 
-Task checkpoint code saves component buffers, counters, RNG and scene integration
-fields including warmstart, applied forces, controls and mocap poses. Restore
-rebuilds derived physics and rewrites warmstart. Asset and config identity are
-checked. This path is implemented but not GPU-verified; the queued lifecycle
-probe now includes a same-process disk roundtrip. No separate-process recovery
-or identical future contact trajectory is claimed.
+Task checkpoints save component buffers, counters, RNG and scene integration
+fields including warmstart, applied forces, controls and mocap poses. They now
+also record the scene update timestep/decimation and actual per-group Warp
+timestep, contact `geom_solref` and joint-limit `jnt_solref`. Restore validates
+these alongside assets/config before changing task components or any group.
+It checks the requested physics recipe; it does not silently change the running
+model to another recipe. Older mjlab checkpoints lacking this identity are
+explicitly rejected; capture a new checkpoint with the intended configuration.
+
+A full1536-world/all1200-tool CPU test saves after four real task steps and
+compares eight more steps against an independent-process restoration. Outputs,
+physical state, component histories and RNG match exactly at every step.
+Five negative controls (three runtime fields in the last group, decimation,
+and missing identity) reject without changing task state. This uses recorded
+trained-actor actions, not learner/optimizer restoration or new closed-loop
+inference; GPU and formal-training acceptance remain open. Reproduce with the
+study script `experiments/simtoolreal/check_candidate_task_restore_cpu.py` in
+separate `save` and `restore` processes under finite process limits.
 
 `train.py` loads the original env+agent YAML with resolved Hydra references,
 constructs the concrete task, and uses the vendored Runner with six SAPG cohorts.
